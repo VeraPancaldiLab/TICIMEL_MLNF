@@ -1,0 +1,3833 @@
+---
+title: "Script d'analyse TICIMEL-MELANF"
+author: "Leclercq Etienne CRCT"
+date: "2025-07-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading of packages and Single-Cell RNAseq data
+
+### Packages
+
+<br>
+
+```{r Librairie, echo=T, results='hide', message=F, warning=F}
+library(plotly)
+library(Matrix)
+library(KernSmooth)
+library(Seurat)
+library(decoupleR)
+library(harmony)
+library(tidyverse)
+library(ggplot2)
+library(Seurat)
+library(decoupleR)
+library(tidyr)
+library(patchwork)
+library(pheatmap)
+library(stringr)
+library(writexl)
+library(presto)
+library(clustree)
+library(UCell)
+library(speckle)
+library(ggpubr)
+library(progeny)
+library(SingleCellExperiment)
+library(DESeq2)
+library(ggrepel)
+library(edgeR)
+library(apeglm)
+library(xlsx)
+# library(openxlsx)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(fgsea)
+library(msigdbr)
+library(KernSmooth)
+library(DoubletFinder)
+library(slingshot)
+library(BiocParallel)
+library(BiocSingular)
+library(scater)
+library(UpSetR)
+library(ComplexUpset)
+library(igraph)
+library(GSVA)
+library(GPTCelltype)
+library(openai)
+library(slingshot)
+library(reticulate)
+library(Azimuth)
+library(patchwork)
+library(VennDiagram)
+library(cowplot)
+library(reticulate)
+library(SCP)
+library(fmsb)
+library(purrr)
+library(svglite)
+library(ggradar)
+library(ggvenn)
+library(GO.db)
+library(RColorBrewer)
+```
+
+<br>
+
+```{r Graphical theme}
+theme_my <- function(base_size = 11, base_family = "TT Arial")
+{
+  txt <- element_text(size = base_size, colour = "black", face = "bold")
+  bold_txt <- element_text(size = base_size, colour = "black", face = "bold")
+
+  theme_classic(base_size = base_size, base_family = base_family) +
+  theme(
+    legend.key = element_blank(), 
+    strip.background = element_blank(), 
+
+    text = txt, 
+    plot.title = txt,
+
+    axis.title = txt,
+    axis.text = txt, 
+
+    legend.title = bold_txt, 
+    legend.text = txt,legend.position = "right" ) 
+}
+```
+
+<br>
+
+```{r Packages Version }
+sessionInfo()
+```
+
+<br>
+
+### Data loading, pre-processing and integration
+
+<br>
+
+In this script, we processed single-cell transcriptomic data from the TICIMEL and MELANF projects using the Seurat package, along with ggplot2, stringr, and clustree. We first located and loaded the .h5 files containing the filtered expression matrices with Read10X_h5, then created a Seurat object for each sample, calculated the percentage of mitochondrial genes, and generated quality control plots such as violin plots and scatter plots. We applied a custom filtering strategy, using thresholds specific to each sample for the number of detected genes and the proportion of mitochondrial genes, and visually inspected the results. We then merged all datasets into a single object after renaming the cells, performed normalization, PCA, UMAP, and initial clustering. To correct for batch effects, we used the CCA integration method (IntegrateLayers) and carried out multi-resolution clustering, visualized with clustree, to compare results before and after integration. Finally, we merged the data layers (JoinLayers) and saved the final integrated object in .rds format, along with all the figures generated throughout the workflow.
+
+```{r eval=FALSE}
+#Files loading
+filesT <- list.files("/home/matthieu/Desktop/Etienne_SC/TICIMEL/DATA/TICIMEL/", all.files = TRUE, full.names = TRUE, recursive = TRUE, pattern = "filtered_feature_bc_matrix.h5")
+NameSamplesT <- str_extract(filesT, "T\\d+_S\\d+")
+
+
+filesM <- list.files("/home/matthieu/Desktop/Etienne_SC/TICIMEL/DATA/MELANF/", all.files = TRUE, full.names = TRUE, recursive = TRUE, pattern = "filtered_feature_bc_matrix.h5")
+NameSamplesM <- str_extract(filesM, "M\\d+_S\\d+")
+
+
+NameSamples <- c(NameSamplesT, NameSamplesM)
+
+files <- c(filesT,filesM)
+
+# Quality check and filtering
+QC_Seurat_Patient <- function(files, NameSamples) {
+  seurat_objects <- list()
+  output_dir <- "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/Figures/Pre-Processing/"
+  for (i in 1:length(files)) {
+    print(paste("Processing:", NameSamples[i]))
+    
+    expression_data <- Read10X_h5(files[i])
+    
+    if (class(expression_data) == "list") {
+      expression_data <- expression_data$`Gene Expression`
+    }
+    
+    seurat_object <- CreateSeuratObject(counts = expression_data, project = NameSamples[i])
+    
+    seurat_object[["percent.mt"]] <- PercentageFeatureSet(seurat_object, pattern = "^MT-")
+    
+    seurat_objects[[i]] <- seurat_object
+    
+    vln_plot <- VlnPlot(seurat_object, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3) + 
+      ggtitle(paste("Patient:", NameSamples[i])) + 
+      theme(plot.title = element_text(hjust = 0.5))
+    
+    scatter1 <- FeatureScatter(seurat_object, feature1 = "nFeature_RNA", feature2 = "percent.mt") +
+      ggtitle(paste("Feature vs Mitochondrial Percentage:", NameSamples[i])) + 
+      theme(plot.title = element_text(hjust = 0.5),) + theme_bw()
+    
+    scatter2 <- FeatureScatter(seurat_object, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+      ggtitle(paste("Counts vs Features:", NameSamples[i])) + 
+      theme(plot.title = element_text(hjust = 0.5)) + theme_bw()
+    
+    ggsave(filename = paste0(output_dir, "/", NameSamples[i], "_vln_plot.png"), plot = vln_plot, width = 8, height = 4)
+    ggsave(filename = paste0(output_dir, "/", NameSamples[i], "_scatter1.png"), plot = scatter1, width = 8, height = 4)
+    ggsave(filename = paste0(output_dir, "/", NameSamples[i], "_scatter2.png"), plot = scatter2, width = 8, height = 4)
+    
+  }
+  return(seurat_objects)
+}
+
+pbmc <- QC_Seurat_Patient(files, NameSamples)
+
+
+#Personnalized Tresholds 
+thresholds <- list(
+  list(min_features = 200, max_features = 5000, max_percent_mt = 12.5), #T1_S1
+  list(min_features = 200, max_features = 4000, max_percent_mt = 10), #T1_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #T10_S1
+  list(min_features = 200, max_features = 6000, max_percent_mt = 7), #T10_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #T12_S1
+  list(min_features = 200, max_features = 5000, max_percent_mt = 10), #T12_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #T14_S1
+  list(min_features = 200, max_features = 5000, max_percent_mt = 10), #T14_S6
+  list(min_features = 200, max_features = 5000, max_percent_mt = 10), #T2_S1
+  list(min_features = 200, max_features = 5000, max_percent_mt = 11), #T2_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #T22_S1
+  list(min_features = 200, max_features = 6500, max_percent_mt = 10), #T22_S6
+  list(min_features = 200, max_features = 5300, max_percent_mt = 6), #T23_S1
+  list(min_features = 200, max_features = 4000, max_percent_mt = 10), #T23_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #T24_S1
+  list(min_features = 200, max_features = 6500, max_percent_mt = 9), #T24_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 7.5), #T25_S1
+  list(min_features = 200, max_features = 6300, max_percent_mt = 7.5), #T25_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #T26_S1
+  list(min_features = 200, max_features = 6500, max_percent_mt = 7.5), #T26_S6
+  list(min_features = 200, max_features = 6300, max_percent_mt = 7), #T28_S1
+  list(min_features = 200, max_features = 6500, max_percent_mt = 7.5), #T28_S6
+  list(min_features = 200, max_features = 5000, max_percent_mt = 10), #T3_S1
+  list(min_features = 200, max_features = 5000, max_percent_mt = 10), #T3_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 8.5), #T32_S1
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #T32_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #T5_S1
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #T5_S6
+  list(min_features = 200, max_features = 5000, max_percent_mt = 11), #T6_S1
+  list(min_features = 200, max_features = 5000, max_percent_mt = 10), #T6_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #T9_S1
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #T9_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 12.5), #M13_S1
+  list(min_features = 200, max_features = 5500, max_percent_mt = 12.5), #M13_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 12.5), #M16_S1
+  list(min_features = 200, max_features = 7000, max_percent_mt = 12.5), #M16_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10), #M17_S1
+  list(min_features = 200, max_features = 7000, max_percent_mt = 10), #M17_S6
+  list(min_features = 200, max_features = 5000, max_percent_mt = 11), #M25_S1
+  list(min_features = 200, max_features = 5000, max_percent_mt = 12.5), #M25_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 9), #M26_S1
+  list(min_features = 200, max_features = 6000, max_percent_mt = 11), #M26_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 12.5), #M28_S1
+  list(min_features = 200, max_features = 5500, max_percent_mt = 12.5), #M28_S6
+  list(min_features = 200, max_features = 4500, max_percent_mt = 12.5), #M34_S1
+  list(min_features = 200, max_features = 6000, max_percent_mt = 11), #M34_S6
+  list(min_features = 200, max_features = 6000, max_percent_mt = 12.5), #M42_S1
+  list(min_features = 200, max_features = 6000, max_percent_mt = 10)  #M42_S6
+)
+
+#Tresholds application
+for (i in 1:length(pbmc)) {
+  print(paste("Filtering patient:", i))
+  
+  min_features <- thresholds[[i]]$min_features
+  max_features <- thresholds[[i]]$max_features
+  max_percent_mt <- thresholds[[i]]$max_percent_mt
+  
+  pbmc[[i]] <- subset(pbmc[[i]], subset = nFeature_RNA > min_features & nFeature_RNA < max_features & percent.mt < max_percent_mt)
+}
+
+
+#Post-Filtering Check
+for (i in 1:length(pbmc)) {
+  print(paste("Generating scatter plot for patient:", i))
+  
+  scatter_plot <- FeatureScatter(pbmc[[i]], feature1 = "nFeature_RNA", feature2 = "percent.mt") +
+    ggtitle(paste("Patient", NameSamples[i], ": Percent.mt vs nFeature_RNA after filtering")) + 
+    theme(plot.title = element_text(hjust = 0.5)) + 
+    theme_bw()  
+  print(scatter_plot)
+  
+  ggsave(filename = paste0("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/Figures/Pre-Processing/filtered/patient_", NameSamples[i], "_scatter_plot.png"), 
+         plot = scatter_plot, width = 8, height = 4)
+}
+
+
+#MERGING AND INTEGRATION
+#Merging
+for (i in 1:length(pbmc)) {
+  pbmc[[i]] <- RenameCells(pbmc[[i]], new.names = paste0(NameSamples[i], "_", colnames(pbmc[[i]])))
+}
+
+count_matrices <- lapply(pbmc, function(x) GetAssayData(x, slot = "counts"))
+
+merged_matrix <- Seurat::RowMergeSparseMatrices(count_matrices[[1]], count_matrices[-1])
+
+pbmc <- CreateSeuratObject(counts = merged_matrix, project = "Merged_Seurat")
+
+pbmc[["RNA"]] <- split(pbmc[["RNA"]], f = pbmc$orig.ident)
+
+# Pre integration Test
+pbmc <- NormalizeData(pbmc)
+pbmc <- FindVariableFeatures(pbmc)
+pbmc <- ScaleData(pbmc)
+pbmc <- RunPCA(pbmc)
+pbmc <- FindNeighbors(pbmc, dims = 1:30, reduction = "pca")
+pbmc <- FindClusters(pbmc, resolution = 2, cluster.name = "unintegrated_clusters")
+
+pbmc <- RunUMAP(pbmc, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+P1 <- DimPlot(pbmc, reduction = "umap.unintegrated", group.by = "orig.ident", label = TRUE)
+ggplot2::ggsave(filename = "UMAP_unintegrated.png", plot = P1, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/Figures/unintegrated/", width = 6, height = 4)
+P2 <- DimPlot(pbmc, reduction = "pca", group.by = "orig.ident", label = TRUE)
+ggplot2::ggsave(filename = "PCA_unintegrated.png", plot = P2, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/Figures/unintegrated/", width = 6, height = 4)
+
+
+#Integration 
+pbmc <- IntegrateLayers(object = pbmc, assay = "RNA", method = CCAIntegration,  orig.reduction = "pca", new.reduction = "integrated.cca",  verbose = TRUE)
+
+#Save
+saveRDS(pbmc, file = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/PBMC.rds")
+
+
+pbmc <- FindNeighbors(pbmc, reduction = "integrated.cca", dims = 1:30)
+pbmc <- FindClusters(pbmc, resolution = 0.04, cluster.name = "cca_clusters")
+pbmc <- FindClusters(pbmc, resolution = c(0.04, 0.05, 0.06, 0.07, 0.08), graph.name = "RNA_snn")
+P1 <- clustree(pbmc, prefix = "RNA_snn_res.", assay = "RNA")
+ggsave("Clustree2.png",plot = P1, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/PBMC/Figures/",width = 8, height = 15)
+
+pbmc <- RunUMAP(pbmc, reduction = "integrated.cca", dims = 1:30, reduction.name = "umap.cca")
+P1 <- DimPlot(pbmc, reduction = "umap.cca", group.by = "orig.ident", label = TRUE)
+ggplot2::ggsave(filename = "UMAP_integrated_cca.png", plot = P1, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/Figures/integrated/", width = 6, height = 4)
+
+#Check
+p1 <- VlnPlot(
+  pbmc,
+  features = "rna_CD8A", group.by = "unintegrated_clusters"
+) + NoLegend() + ggtitle("CD8A - Unintegrated Clusters")
+p2 <- VlnPlot(
+  pbmc, "rna_CD8A",
+  group.by = "cca_clusters"
+) + NoLegend() + ggtitle("CD8A - CCA Clusters")
+p1 | p2
+
+#Grouping of layers  (counts/data)
+pbmc <- JoinLayers(pbmc)
+
+P1 <- DimPlot(pbmc, reduction = "umap.cca", group.by = "cca_clusters", label = TRUE)
+ggplot2::ggsave(filename = "UMAP_integrated_cca_clusterized.png2", plot = P1, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/Figures/integrated/", width = 6, height = 4)
+
+saveRDS(pbmc, file = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/PBMC.rds")
+```
+
+![PBMC UMAP](UMAP_integrated_cca_clusterized.png) 
+
+<br>
+
+### Adding the ADT layer (Protein information) and other metadatas
+
+```{r eval=FALSE}
+Pipeline_Protein_Seurat <- function(pbmc, Patient_Protein_Files, NameSamples){
+  require(tidyverse)
+  
+  ### Loading Protein files:
+  myfxn <- function(i, p, n){
+    patient = n[i]
+    P1 = Seurat::Read10X_h5(p[i])
+    P1 = as.data.frame(P1$`Antibody Capture`)
+    if (patient %in% c("T1_S1", "T1_S6")) {
+      colnames(P1) = "CD4.1"
+      P1 = t(P1)
+    }
+    colnames(P1) = paste0(patient, "-", colnames(P1))
+    rownames(P1) = str_replace(rownames(P1), pattern = fixed(".1"), "")
+    P1 = P1 %>% as.data.frame()
+    
+    # Renaming for specific cases
+    rownames(P1)[rownames(P1) == "CD14_3G8"] = "CD16"
+    rownames(P1)[rownames(P1) == "CD14_M5E2"] = "CD14"
+    P1$id = rownames(P1)
+    
+    return(P1)
+  }
+  
+  print("Loading all CellRanger objects")
+  Protein = pbmcapply::pbmclapply(1:length(Patient_Protein_Files),
+                                   FUN = myfxn,
+                                   n = NameSamples,
+                                   p = Patient_Protein_Files,
+                                   mc.cores = 12, mc.style = "ETA")
+  
+  print("Merging all Datasets")
+  Protein = Protein %>% purrr::reduce(merge, by = "id", all = TRUE) %>% column_to_rownames("id")
+  
+  print("Creating Seurat Object")
+  print(head(colnames(pbmc)))
+  print(head(colnames(Protein)))
+  print(dim(Protein))
+  print(head(Protein))
+  print(dim(pbmc))
+  print(head(pbmc))
+  
+  # Normalisation des noms de cellules
+  colnames(pbmc) <- gsub("T1_S1-", "", colnames(pbmc))  
+  colnames(pbmc) <- gsub("-", "_", colnames(pbmc))
+  colnames(Protein) <- gsub("-", "_", colnames(Protein))
+  
+  print("Noms de cellules dans pbmc :")
+print(head(colnames(pbmc), 20))  
+
+print("Noms de cellules dans Protein :")
+print(head(colnames(Protein), 20))
+
+  common_cells <- intersect(colnames(pbmc), colnames(Protein))
+  if (length(common_cells) == 0) {
+    stop("No common cells found between pbmc and Protein. Please check the cell names.")
+  }
+  
+  print(paste("Nombre de cellules communes :", length(common_cells)))
+  
+  pbmc = pbmc[, colnames(pbmc) %in% common_cells]
+  
+  adt_counts <- Protein[, colnames(Protein) %in% common_cells]
+  pbmc[["ADT"]] = Seurat::CreateAssayObject(counts = adt_counts)
+  
+  return(pbmc)
+}
+
+pbmctest = Pipeline_Protein_Seurat(pbmc = pbmctest, Patient_Protein_Files = files, NameSamples = NameSamples)
+
+pbmctest[["ADT"]]@counts[is.na(pbmctest[["ADT"]]@counts)] <- 0
+pbmctest[["ADT"]]@data[is.na(pbmctest[["ADT"]]@data)] <- 0
+
+pbmctest@meta.data$nCount_ADT <- Matrix::colSums(pbmctest@assays$ADT@counts)
+summary(pbmctest@meta.data$nCount_ADT)
+
+pbmctest@meta.data$log_umi <- log1p(pbmctest@meta.data$nCount_ADT)
+any(is.na(pbmctest@meta.data$log_umi) | is.nan(pbmctest@meta.data$log_umi) | is.infinite(pbmctest@meta.data$log_umi))
+
+DefaultAssay(pbmctest) <- 'ADT'
+
+VariableFeatures(pbmctest) <- rownames(pbmctest[["ADT"]])
+pbmctest <- NormalizeData(pbmctest, normalization.method = 'CLR', margin = 2,) %>% 
+  ScaleData() %>% RunPCA(reduction.name = 'apca')
+
+pbmc <- pbmctest
+
+DefaultAssay(pbmc) <- "ADT"
+
+P1 <- FeaturePlot(pbmc, reduction = "umap.cca", features = Features(pbmc))
+ggsave(filename = "Protéines.png",plot = P1,path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/PBMC/Figures/", width = 30,height = 20)
+
+
+pbmc@meta.data$Week <- ifelse(grepl("S1", rownames(pbmc@meta.data)), "S1", 
+                              ifelse(grepl("S6", rownames(pbmc@meta.data)), "S6", NA))
+
+pbmc@meta.data$Traitement <- ifelse(
+  grepl("\\bT1\\b|\\bT3\\b|\\bT5\\b|\\bT9\\b|\\bT23\\b|\\bT24\\b|\\bT26\\b|\\bT32\\b", pbmc@meta.data$orig.ident), 
+  "Certolizumab",
+  ifelse(
+    grepl("\\bT2\\b|\\bT12\\b|\\bT6\\b|\\bT10\\b|\\bT14\\b|\\bT22\\b|\\bT25\\b|\\bT28\\b", pbmc@meta.data$orig.ident), 
+    "Infliximab", 
+    "Ipi-Nivo"
+  )
+)
+
+pbmc@meta.data$Reponse <- ifelse(grepl("\\bT1\\b|\\bT3\\b|\\bT6\\b|\\bT9\\b|\\bT10\\b|\\bT12\\b|\\bT23\\b|\\bT28\\b|\\bM13\\b|\\bM17\\b|\\bM26\\b|\\bM34\\b", pbmc@meta.data$orig.ident), "R",
+                                 ifelse(grepl("\\bT2\\b|\\bT5\\b|\\bT14\\b|\\bT22\\b|\\bT24\\b|\\bT25\\b|\\bT26\\b|\\bT32\\b|\\bM16\\b|\\bM25\\b|\\bM28\\b|\\bM42\\b", pbmc@meta.data$orig.ident), "NR", NA))
+
+
+cell_names <- rownames(pbmc@meta.data)
+
+pbmc@meta.data$Name <- sapply(strsplit(cell_names, "_"), function(x) paste(x[1:2], collapse = "_"))
+
+pbmc@meta.data$Name <- paste(pbmc@meta.data$Name, pbmc$Reponse, sep = "_")
+
+pbmc$Cluster_Rep <- paste(pbmc$Reponse, pbmc$Week, sep = "_")
+```
+
+<br>
+
+## Gating Strategy for CD4/CD8 with Single Cell Signature Explorer
+
+(F.Pont <https://doi.org/10.1093/nar/gkz601>)
+
+<br>
+
+In this script we chosed not to follow the basic clustering way to discriminate the subpopulations of pbmc cells. Indeed we based ourselves on the Single Cell Signature Explorer tool that allows the inference of a score for each and every cell based on handmade signatures. Then with the merger we combined the scores and the coordinates of the UMAP in order to use the last tool : the virtual cytometer. We used a classical gating strategy to find appropriate tresholds to discriminate the subpopulations.
+
+![VIRTUAL CYTOMETER](VirtualCyto.png) 
+
+<br>
+
+```{r, fig.width=12, fig.height=8, eval=FALSE}
+pbmc <- readRDS("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/PBMC.rds")
+path_figures <- "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES-GATING/"
+
+write.table(t(as.matrix(pbmc[["RNA"]]$data)), "/home/matthieu/Desktop/Etienne_SC/TICIMEL/F.PONT_SignatureExplorer/SingleCellSignatureExplorer_20240613/SingleCellSignatureScorer/data/pbmc.tsv",sep="\t", row.names = TRUE, col.names=NA)
+
+data_table <- as.data.table(t(as.matrix(pbmc[["RNA"]]$data)))
+fwrite(data_table,"/home/matthieu/Desktop/Etienne_SC/TICIMEL/F.PONT_SignatureExplorer/SingleCellSignatureExplorer_20240613/SingleCellSignatureScorer/data/pbmc.tsv", sep = "\t", row.names = TRUE, showProgress = TRUE, nThread = 14)
+
+
+umap_embeddings <- Embeddings(pbmc, reduction = "umap.cca")
+umap_embeddings <- cbind(colnames(pbmc),umap_embeddings)
+write.table(umap_embeddings,"/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/PBMC/My_umap_coordinate_pbmc.tsv", sep="\t", row.names = FALSE)
+
+Scores <- read_tsv("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/PBMC/Myelo-B_pbmc_merged_all_transposed_no_header.tsv")
+
+#Gating 1
+
+T_cells <- Scores %>%
+  dplyr::filter(B < 0.065, Myelo < 1.4) %>%
+  dplyr::pull(id)  
+T_cells1 <- subset(pbmc, cells = T_cells)
+
+n_cells <- ncol(T_cells1)
+P1 <- DimPlot(T_cells1, reduction = "umap.cca", group.by = "orig.ident", label = TRUE) +
+  labs(title = paste("UMAP de T_cells1 - Nombre de cellules :", n_cells))
+ggsave("Dimplot_Tcells_1.png", plot = P1, path = path_figures, width = 8, height = 4, dpi = 400)
+P1 <- FeaturePlot(T_cells1, reduction = "umap.cca", features = "FCGR3A")
+ggsave("FCGR3A_Tcells_1.png", plot = P1, path = path_figures, width = 8, height = 4, dpi = 400)
+
+write.table(t(as.matrix(T_cells1[["RNA"]]$data)), "/home/matthieu/Desktop/Etienne_SC/TICIMEL/F.PONT_SignatureExplorer/SingleCellSignatureExplorer_20240613/SingleCellSignatureScorer/data/T_cells.tsv",sep="\t", row.names = TRUE, col.names=NA,)
+data <- fread("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/PBMC/pbmc_merged_all_transposed_no_header.tsv")
+
+cellules_conservees <- colnames(T_cells1)
+
+data <- data[Cell_ID %in% cellules_conservees]
+
+fwrite(data, "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/T/T_cells.tsv", sep = "\t", row.names = FALSE,showProgress = TRUE,nThread = 14)
+
+
+umap_embeddings <- Embeddings(T_cells1, reduction = "umap.cca")
+umap_embeddings <- cbind(colnames(T_cells1),umap_embeddings)
+write.table(umap_embeddings,"/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/T/My_umap_coordinate_T.tsv", sep="\t", row.names = FALSE)
+
+Scores <- read_tsv("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/T/CD3-FCGR3A_T_cells_merged.tsv")
+
+#Gating 2 NK-CD3
+path_figures <- "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/T/"
+
+FCGR3A_cellules <- Scores %>%
+  dplyr::filter(CD3 < 0.04, FCGR3A > 0.00) %>%
+  dplyr::pull(CellsId)  
+
+all_cells <- Cells(T_cells1)
+T_cellules <- setdiff(all_cells, FCGR3A_cellules)
+T_cells <- subset(T_cells1, cells = T_cellules)
+
+n_cells <- ncol(T_cells)
+P1 <- DimPlot(T_cells, reduction = "umap.cca", group.by = "orig.ident", label = TRUE) +
+  labs(title = paste("UMAP de T_cells - Nombre de cellules :", n_cells))
+ggsave("Dimplot_T_cells.png", plot = P1, path = path_figures, width = 8, height = 4, dpi = 400)
+DefaultAssay(T_cells) <- "RNA"
+FeaturePlot(T_cells, reduction = "umap.cca",features = c("NCAM1","TRAV1","TRAC1"))
+DefaultAssay(T_cells) <- "ADT"
+FeaturePlot(T_cells, reduction = "umap.cca",features = c("CD16","CD3","CD8","CD4","CD14"))
+
+data <- fread("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/T/T_cells.tsv")
+
+cellules_conservees <- colnames(T_cells)
+
+data <- data[Cell_ID %in% cellules_conservees]
+
+fwrite(data, "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/T/T_cells2.tsv", sep = "\t", row.names = FALSE,showProgress = TRUE,nThread = 14)
+
+umap_embeddings <- Embeddings(T_cells, reduction = "umap.cca")
+umap_embeddings <- cbind(colnames(T_cells),umap_embeddings)
+write.table(umap_embeddings,"/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/T/My_umap_coordinate_T2.tsv", sep="\t", row.names = FALSE)
+
+Scores <- read_tsv("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/T/CD3-NCAM1_T_cells2_merged2.tsv")
+
+#Gating 3 NK-CD3
+path_figures <- "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/T/"
+
+NCAM1_cellules <- Scores %>%
+  dplyr::filter(CD3 < 0.04, NCAM1 > 0.00) %>%
+  dplyr::pull(CellsId)  
+
+all_cells <- Cells(T_cells)
+T_cellules <- setdiff(all_cells, NCAM1_cellules)
+T_cells3 <- subset(T_cells, cells = T_cellules)
+
+n_cells <- ncol(T_cells3)
+P1 <- DimPlot(T_cells3, reduction = "umap.cca", group.by = "orig.ident", label = TRUE) +
+  labs(title = paste("UMAP de T_cells3 - Nombre de cellules :", n_cells))
+ggsave("Dimplot_T_cells3.png", plot = P1, path = path_figures, width = 8, height = 4, dpi = 400)
+DefaultAssay(T_cells3) <- "RNA"
+FeaturePlot(T_cells3, reduction = "umap.cca",features = c("NCAM1","TRAV1","TRAC1"))
+DefaultAssay(T_cells3) <- "ADT"
+FeaturePlot(T_cells3, reduction = "umap.cca",features = c("CD16","CD3","CD8","CD4","CD14"))
+
+DefaultAssay(T_cells3) <- "RNA"
+P1 <- FeaturePlot(T_cells3, reduction = "umap.cca",features = c("CD56","CCR7","CSF2","CXCR3","IFNG","IL2RB","IL7R","KIT","KLRC1","KLRD1","NCR1","SELL","CD16","CX3CR1","CXCR1","ITGB2","KIRS","KLRC2","KLRG1","PRF1","CCR7","CD69","EOMES","ICAM1","ITGA1","NCR2","NCR3","TBX21","B3GAT1","LILRB1","KLRA8"))
+ggsave("Recherche_NK.png", plot = P1, path = path_figures, width = 15, height = 20)
+
+
+data <- fread("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/T/T_cells2.tsv")
+
+cellules_conservees <- colnames(T_cells3)
+
+data <- data[Cell_ID %in% cellules_conservees]
+
+fwrite(data, "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/T/T_cells3.tsv", sep = "\t", row.names = FALSE,showProgress = TRUE,nThread = 16)
+
+umap_embeddings <- Embeddings(T_cells3, reduction = "umap.cca")
+umap_embeddings <- cbind(colnames(T_cells3),umap_embeddings)
+write.table(umap_embeddings,"/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/T/My_umap_coordinate_T3.tsv", sep="\t", row.names = FALSE)
+
+Scores <- read_tsv("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/F.PONT_SCSE/DATA-RESULTS/T/CD3-CD8_T_cells3.tsv")
+
+#Gating 4
+
+CD8_cells <- Scores %>%
+  dplyr::filter(CD3 > 0.02, CD8 > 0.02) %>%
+  dplyr::pull(id)  
+CD8 <- subset(T_cells3, cells = CD8_cells)
+
+CD4_cells <- Scores %>%
+  dplyr::filter(CD3 > 0.02, CD8 == 0.0) %>%
+  dplyr::pull(id)  
+CD4 <- subset(T_cells3, cells = CD4_cells)
+
+n_cells <- ncol(CD8)
+P1 <- DimPlot(CD8, reduction = "umap.cca", group.by = "orig.ident", label = TRUE) +
+  labs(title = paste("UMAP de CD8 - Nombre de cellules :", n_cells))
+ggsave("Dimplot_CD8.png", plot = P1, path = path_figures, width = 8, height = 4, dpi = 400)
+
+n_cells <- ncol(CD4)
+P1 <- DimPlot(CD4, reduction = "umap.cca", group.by = "orig.ident", label = TRUE) +
+  labs(title = paste("UMAP de CD4 - Nombre de cellules :", n_cells))
+ggsave("Dimplot_CD4.png", plot = P1, path = path_figures, width = 8, height = 4, dpi = 400)
+
+#Visu sur Tcells3
+T_cells3$cell_type <- "Autres"  
+T_cells3$cell_type[colnames(T_cells3) %in% CD4_cells] <- "CD4"
+T_cells3$cell_type[colnames(T_cells3) %in% CD8_cells] <- "CD8"
+
+P1 <- DimPlot(T_cells3, reduction = "umap.cca", group.by = "cell_type") +
+  scale_color_manual(values = c("Autres" = "grey", "CD4" = "red", "CD8" = "grey")) +
+  labs(title = paste("UMAP de T_cells3 - Cellules CD4  en rouge"))
+ggsave("Dimplot_Tcells3_CD4.png", plot = P1, path = path_figures, width = 8, height = 4, dpi = 400)
+
+P1 <- DimPlot(T_cells3, reduction = "umap.cca", group.by = "cell_type") +
+  scale_color_manual(values = c("Autres" = "grey", "CD4" = "grey", "CD8" = "red")) +
+  labs(title = paste("UMAP de T_cells3 - Cellules CD8 en rouge"))
+ggsave("Dimplot_Tcells3_CD8.png", plot = P1, path = path_figures, width = 8, height = 4, dpi = 400)
+
+saveRDS(CD4, file = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD4_SCSE_base.rds")
+saveRDS(CD8, file = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE_base.rds")
+```
+
+<br>
+
+# Analysis CD8
+
+<br>
+
+Here we went further on the selection of CD8 cells by eliminating cells expressing genes such as CD4, NCAM1 and others. We used again the package `clustree` to chose to most adequate resolution for the clustering. We also used the Seurat FindMarkers function to select the differentially expressed genes necessary for the pathway enrichment analysis.  
+
+```{r Fig.2.b, eval=FALSE}
+CD8 <- readRDS("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE_base.rds")
+
+CD8$Cluster_Rep <- paste(CD8$Reponse, CD8$Week, sep = "_")
+
+path_figures <- "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/FIGURES/"
+
+DefaultAssay(CD8) <- "RNA"
+CD8 <- FindNeighbors(CD8, reduction = "integrated.cca", dims = 1:30)
+CD8 <- FindClusters(CD8, resolution = c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0), graph.name = "RNA_snn")
+P1 <- clustree(CD8, prefix = "RNA_snn_res.", assay = "RNA")
+ggsave("Clustree.png",plot = P1, path = path_figures,width = 8, height = 15)
+
+CD8 <- FindClusters(CD8, resolution = 0.2, cluster.name = "cca_clusters")
+CD8 <- FindClusters(CD8, resolution = 0.2, graph.name = "RNA_snn")
+
+CD8 <- RunUMAP(CD8, reduction = "integrated.cca", dims = 1:30, reduction.name = "umap.cca")
+P1 <- DimPlot(CD8, reduction = "umap.cca", group.by = "Name", label = TRUE)
+ggplot2::ggsave(filename = "umap_integrated_V2.png", plot = P1, path = (path_figures), width = 8, height = 4)
+P2 <- DimPlot(CD8, reduction = "umap.cca", label = TRUE)
+ggplot2::ggsave(filename = "umap_integrated_clusters.png", plot = P2, path = (path_figures), width = 6, height = 4)
+
+#Cluster 7 (plaquettes) et gènesCD4
+CD8 <- subset(CD8, idents = c("7"), invert = TRUE)
+
+table(CD8$orig.ident)
+
+CD8 <- subset(CD8, subset = adt_CD4 > 0 | rna_CD8A == 0 | rna_CD8B == 0)
+
+table(CD8$orig.ident)
+
+DefaultAssay(CD8) <- "RNA"
+CD8 <- subset(CD8, subset = CD4 > 0, invert = TRUE)
+CD8 <- subset(CD8, subset = NCAM1 > 0, invert = TRUE)
+CD8 <- subset(CD8, subset = NCR1 > 0, invert = TRUE)
+
+CD8
+CD8 <- subset(CD8, subset = IGHM > 0, invert = TRUE)
+CD8 <- subset(CD8, subset = IGHG1 > 0, invert = TRUE)
+CD8 <- subset(CD8, subset = IGHA1 > 0, invert = TRUE)
+CD8
+
+CD8 <- FindNeighbors(CD8, reduction = "integrated.cca", dims = 1:30)
+CD8 <- FindClusters(CD8, resolution = c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0), graph.name = "RNA_snn")
+P1 <- clustree(CD8, prefix = "RNA_snn_res.", assay = "RNA")
+ggsave("Clustree2.png",plot = P1, path = path_figures,width = 8, height = 15)
+
+CD8 <- FindClusters(CD8, resolution = 0.2, cluster.name = "cca_clusters")
+CD8 <- FindClusters(CD8, resolution = 0.2, graph.name = "RNA_snn")
+
+CD8 <- RunUMAP(CD8, reduction = "integrated.cca", dims = 1:30, reduction.name = "umap.cca")
+P1 <- DimPlot(CD8, reduction = "umap.cca", group.by = "Name", label = TRUE)
+ggplot2::ggsave(filename = "umap_integrated_V2.png", plot = P1, path = (path_figures), width = 8, height = 4)
+P2 <- DimPlot(CD8, reduction = "umap.cca", label = TRUE)
+ggplot2::ggsave(filename = "umap_integrated_clusters.png", plot = P2, path = (path_figures), width = 6, height = 4)
+
+#FeaturePlot
+DefaultAssay(CD8) <- 'ADT'
+P1 <- FeaturePlot(CD8, reduction = "umap.cca", features = Features(CD8),cols = c("lightgrey", "#fd3f92"))
+ggplot2::ggsave(filename = "Prot.png", plot = P1, path = (path_figures), width = 20, height = 8)
+
+#DEGS + Dotplot
+DefaultAssay(CD8) <- 'RNA'
+Markers <- FindMarkers(CD8, ident.1 = "0")
+Markers <- rownames_to_column(Markers, var = "Gene")
+write_xlsx(Markers, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/DATA/Cluster0.xlsx")
+Markers1 <- FindMarkers(CD8, ident.1 = "1")
+Markers1 <- rownames_to_column(Markers1, var = "Gene")
+write_xlsx(Markers1, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/DATA/Cluster1.xlsx")
+Markers2 <- FindMarkers(CD8, ident.1 = "2")
+Markers2 <- rownames_to_column(Markers2, var = "Gene")
+write_xlsx(Markers2, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/DATA/Cluster2.xlsx")
+Markers3 <- FindMarkers(CD8, ident.1 = "3")
+Markers3 <- rownames_to_column(Markers3, var = "Gene")
+write_xlsx(Markers3, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/DATA/Cluster3.xlsx")
+Markers4 <- FindMarkers(CD8, ident.1 = "4")
+Markers4 <- rownames_to_column(Markers4, var = "Gene")
+write_xlsx(Markers4, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/DATA/Cluster4.xlsx")
+Markers5 <- FindMarkers(CD8, ident.1 = "5")
+Markers5 <- rownames_to_column(Markers5, var = "Gene")
+write_xlsx(Markers5, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/DATA/Cluster5.xlsx")
+Markers6 <- FindMarkers(CD8, ident.1 = "6")
+Markers6 <- rownames_to_column(Markers6, var = "Gene")
+write_xlsx(Markers6, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/DATA/Cluster6.xlsx")
+Markers7 <- FindMarkers(CD8, ident.1 = "7")
+Markers7 <- rownames_to_column(Markers7, var = "Gene")
+write_xlsx(Markers7, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/DATA/Cluster7.xlsx")
+
+
+
+Clu <- list("0","1","2","3","4","5","6","7")
+
+for (i in seq_along(Clu)) {
+  tmp <- FindMarkers(CD8, ident.1 = Clu[[i]])
+  tmp <- rownames_to_column(tmp, var = "Gene")
+  filename <- paste0("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/DATA/degs_rds/de_", Clu[[i]], ".Rda")
+  save(tmp, file = filename)
+}
+
+```
+
+![UMAP CD8](umap_integrated_clusters.png)
+
+<br>
+
+Dot plot of the expression across the clusters of markers selected based on the literature.
+
+```{r Fig.2.c, fig.width = 3.5, fig.height = 4}
+CD8=readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+path_figures <- "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/"
+
+selected_genes <- c("SELL","CCR7","HAVCR2","GZMK","GZMB","CD38","MKI67","HLA-DRA","KLRB1","TCF7","CD3D","CD3E","CD3G","CD8A","CD8B")
+
+dotplot <- DotPlot(CD8, features = selected_genes, cols = c("aquamarine2", "darkviolet"), 
+                   dot.scale = 8, group.by = "seurat_clusters") +
+  scale_size(range = c(1, 4)) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  #theme(legend.position = "none") +
+  coord_flip() +
+  labs(x = NULL, y = NULL, 
+       size = "Fraction of Cells (%)", 
+       color = "Mean Expression") 
+ggsave(file="Dotplot_liste_AM_(LEGENDE).svg", plot=dotplot, path = path_figures, width=5, height=3.5,dpi = 700)
+
+dotplot <- DotPlot(CD8, features = selected_genes, cols = c("aquamarine2", "darkviolet"), 
+                   dot.scale = 8, group.by = "seurat_clusters") +
+  scale_size(range = c(1, 4)) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  theme(legend.position = "none") +
+  coord_flip() +
+  labs(x = NULL, y = NULL, 
+       size = "Fraction of Cells (%)", 
+       color = "Mean Expression") 
+print(dotplot)
+
+```
+
+<br>
+
+Trajectory analysis
+
+```{r Fig.2.d, fig.width = 10, fig.height = 12}
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+path_figures <- "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/FIGURES/PROGENY_Et_Autres/TRAJECTOIRE/"
+
+CD8 <- subset(CD8, idents = c("5"), invert = TRUE)
+
+CD8_slingshot <- SCP::RunSlingshot(srt = CD8, group.by = "RNA_snn_res.0.2", reduction = "umap.cca", start = 3,show_plot = FALSE)
+
+FeatureDimPlot(CD8_slingshot, features = paste0("Lineage", 1:3), reduction = "umap.cca", theme_use = "theme_blank")
+
+```
+
+<br>
+
+As explained in the article we picked the cluster 2 for the next analysis. The next script shows the evolution of the proportions of cells of this cluster between Week 0 and 6 for each treatment.
+
+```{r Fig.2.e, fig.width=9, fig.height=2, warning=F}
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+
+CD8$Cluster_Rep <- paste(CD8$Reponse, CD8$Week, sep = "_")
+CD8$Traitement_Week <- paste(CD8$Traitement, CD8$Week, sep = "_")
+
+ppt <- CD8@meta.data %>%
+  as.data.frame() %>%
+  dplyr::group_by(Name, cca_clusters, Cluster_Rep, Traitement) %>%
+  summarise(n = n()) %>%
+  dplyr::group_by(Name, Cluster_Rep,Traitement) %>%
+  summarise(freq = n / sum(n), cca_clusters) %>%
+  as.data.frame()
+
+ppt <- ppt %>%
+  mutate(Type = case_when(
+    cca_clusters == 2 ~ "Cluster2"))
+
+ppt$Traitement_Cluster <- paste0(ppt$Traitement, "_", ppt$cca_clusters)
+
+ppt$Traitement_Cluster <- factor(ppt$Traitement_Cluster, levels = c(
+  "Certolizumab_2", "Infliximab_2", "Ipi-Nivo_2"))
+
+ppt$group <- substr(ppt$Name, 1, 3)
+ppt <- dplyr::mutate(ppt, Patient = as.factor(group))
+
+ppt <- drop_na(ppt)
+
+color_map <- c(
+  "Certolizumab" = "#5f4a95",
+  "Infliximab"  = "#4570b6",
+  "Ipi-Nivo"    = "#46b9ab"
+)
+
+all_plots <- list()
+
+for (cluster in unique(ppt$cca_clusters)) {
+  for (traitement in unique(ppt$Traitement)) {
+    
+    filtered_data <- ppt %>%
+      filter(cca_clusters == cluster & Traitement == traitement)
+    
+    filtered_data <- filtered_data %>%
+      mutate(Cluster_Rep_Simplified = case_when(
+        str_detect(Cluster_Rep, "S1") ~ "S1",
+        str_detect(Cluster_Rep, "S6") ~ "S6",
+        TRUE ~ NA_character_
+      )) %>%
+      filter(!is.na(Cluster_Rep_Simplified))
+    
+    p_value <- if (all(c("S1", "S6") %in% filtered_data$Cluster_Rep_Simplified)) {
+      wilcox.test(
+        filtered_data$freq[filtered_data$Cluster_Rep_Simplified == "S1"],
+        filtered_data$freq[filtered_data$Cluster_Rep_Simplified == "S6"],
+        exact = FALSE
+      )$p.value
+    } else {
+      NA
+    }
+    
+    title <- paste0("Cluster ", cluster, " - ", traitement, ": ", 
+                    ifelse(!is.na(p_value) & p_value < 0.05, "*", "ns"))
+    
+    plot <- ggplot(filtered_data, aes(
+      x = Cluster_Rep_Simplified,
+      y = freq,
+      color = Traitement,     
+      group = Patient         
+    )) +
+      geom_point() +
+      geom_line() +
+      scale_color_manual(values = color_map) +  
+      labs(title = title, x = "Cluster Rep (Simplified)", y = "Frequency") +
+      ylim(0, 0.4) +
+      theme_my() +
+      theme(legend.position = "none")
+    
+    all_plots[[paste0("Cluster_", cluster, "_", traitement)]] <- plot
+  }
+}
+
+combined_plot <- wrap_plots(all_plots, ncol = 4)
+
+print(combined_plot)
+
+
+```
+
+<br>
+
+Here we performed pathway enrichment using the fgsea package and the function fora(). We decided to apply tresholds on the percentage of cells expressing the genes (20%).
+
+```{r, eval=FALSE}
+pbmc=readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+DefaultAssay(pbmc)="RNA"
+path_figures <- "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/FIGURES/PROGENY_Et_Autres/ORA_pct_02/RES_ORA/"
+
+Pathways=c("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/h.all.v2024.1.Hs.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.reactome.v2024.1.Hs.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.kegg_medicus.v2024.1.Hs.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c5.go.bp.v2024.1.Hs.symbols.gmt" )
+
+
+###
+pbmc$condition=paste0(pbmc$RNA_snn_res.0.2,"_",pbmc$Traitement,"_",pbmc$Week)
+Idents(pbmc)=pbmc$condition
+
+condition=list(c("0_Certolizumab_S6","0_Certolizumab_S1"),
+               c("0_Infliximab_S6","0_Infliximab_S1"),
+               c("0_Ipi-Nivo_S6","0_Ipi-Nivo_S1"),
+               c("1_Certolizumab_S6","1_Certolizumab_S1"),
+               c("1_Infliximab_S6","1_Infliximab_S1"),
+               c("1_Ipi-Nivo_S6","1_Ipi-Nivo_S1"),
+               c("2_Certolizumab_S6","2_Certolizumab_S1"),
+               c("2_Infliximab_S6","2_Infliximab_S1"),
+               c("2_Ipi-Nivo_S6","2_Ipi-Nivo_S1"),
+               c("3_Certolizumab_S6","3_Certolizumab_S1"),
+               c("3_Infliximab_S6","3_Infliximab_S1"),
+               c("3_Ipi-Nivo_S6","3_Ipi-Nivo_S1"),
+               c("4_Certolizumab_S6","4_Certolizumab_S1"),
+               c("4_Infliximab_S6","4_Infliximab_S1"),
+               c("4_Ipi-Nivo_S6","4_Ipi-Nivo_S1"),
+               c("5_Certolizumab_S6","5_Certolizumab_S1"),
+               c("5_Infliximab_S6","5_Infliximab_S1"),
+               c("5_Ipi-Nivo_S6","5_Ipi-Nivo_S1"),
+               c("6_Certolizumab_S6","6_Certolizumab_S1"),
+               c("6_Infliximab_S6","6_Infliximab_S1"),
+               c("6_Ipi-Nivo_S6","6_Ipi-Nivo_S1"),
+               c("7_Certolizumab_S6","7_Certolizumab_S1"),
+               c("7_Infliximab_S6","7_Infliximab_S1"),
+               c("7_Ipi-Nivo_S6","7_Ipi-Nivo_S1"))
+
+
+for(condi in condition){
+  Idents(pbmc)=pbmc$condition
+
+marks=FindMarkers(pbmc,ident.1 =condi[[1]],ident.2 = condi[2:length(condi)] ) %>% rownames_to_column("Gene") %>% 
+  dplyr::filter(p_val_adj<0.01,(pct.1>0.2|pct.2>0.2),abs(avg_log2FC)>0.5) %>% 
+  dplyr::mutate(diff=pct.1-pct.2)
+  
+bgset=rownames(pbmc)[rowSums(pbmc[["RNA"]]$counts)>0]
+
+pp=lapply(Pathways, function(x){
+  
+  pathways.hallmark <- fgsea::gmtPathways(x)
+
+  
+  orr=fgsea::fora(pathways = pathways.hallmark,genes=marks$Gene,universe = bgset) %>% dplyr::filter(padj<0.01) %>% 
+    dplyr::select(-overlapGenes)
+  
+
+  return(orr)
+
+})
+
+pp <- lapply(Pathways, function(x) {
+  pathways <- fgsea::gmtPathways(x)
+  fgsea::fora(pathways = pathways,
+              genes    = marks$Gene,
+              universe = bgset) %>%
+    filter(padj < 0.01)
+})
+
+dat <- bind_rows(pp) %>%
+  arrange(padj)
+
+plt <- dat %>%
+  as_tibble() %>%
+  
+  mutate(
+    geneList = overlapGenes %>%
+      str_remove_all("^c\\(") %>%      
+      str_remove_all("\\)$") %>%       
+      str_remove_all('\\"') %>%        
+      str_split(",\\s*")               
+  ) %>%
+
+  mutate(
+    overlapPos = map(geneList, ~ keep(.x,  ~ {
+      idx <- match(.x, marks$Gene)
+      !is.na(idx) && marks$avg_log2FC[idx] > 0
+    })),
+    overlapNeg = map(geneList, ~ keep(.x,  ~ {
+      idx <- match(.x, marks$Gene)
+      !is.na(idx) && marks$avg_log2FC[idx] < 0
+    }))
+  ) %>%
+  
+  mutate(
+    overlapGenes = map_chr(geneList, paste, collapse = ";"),
+    overlapPos   = map_chr(overlapPos,   paste, collapse = ";"),
+    overlapNeg   = map_chr(overlapNeg,   paste, collapse = ";")
+  ) %>%
+  
+  arrange(padj) %>%
+  mutate(
+    pathway   = factor(pathway, levels = rev(pathway)),
+    rank      = row_number(),
+    GeneRatio = overlap / size
+  )
+
+plt_to_export <- plt %>% 
+  dplyr::select(-geneList)
+
+stopifnot(all(!map_lgl(plt_to_export, is.list)))
+
+write.table(plt_to_export,file      = paste0(path_figures, "/ORA_RESULTS_", condi[[1]], "_vs_", condi[[2]], ".txt"),  quote     = FALSE,  sep       = "\t",  row.names = FALSE)
+  
+}
+  
+
+```
+
+<br>
+
+In this script, we analyzed pathway enrichment for the CD8 population across the three treatments. We loaded the enrichment results, standardized the values, and combined them with curated pathway collections from MSigDB to build a common reference. From each condition we selected the top enriched pathways, calculated fold-enrichment scores relative to the CD8 gene universe, and normalized the results for comparability. Finally, we visualized the data as a comparative bar plot.
+
+```{r Fig.2.f, fig.width = 9, fig.height = 12}
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+
+dat1_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/FIGURES/PROGENY_Et_Autres/ORA_pct_02/RES_ORA/ORA_RESULTS_2_Certolizumab_S6_vs_2_Certolizumab_S1.txt",sep ="")
+dat2_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/FIGURES/PROGENY_Et_Autres/ORA_pct_02/RES_ORA/ORA_RESULTS_2_Infliximab_S6_vs_2_Infliximab_S1.txt",sep ="")
+dat3_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/FIGURES/PROGENY_Et_Autres/ORA_pct_02/RES_ORA/ORA_RESULTS_2_Ipi-Nivo_S6_vs_2_Ipi-Nivo_S1.txt",sep ="")
+
+dat1_raw$Traitement <- "Certolizumab"
+dat2_raw$Traitement <- "Infliximab"
+dat3_raw$Traitement <- "IpiNivo"
+
+dat1_raw <- dat1_raw %>% mutate(pval = as.numeric(pval))
+dat2_raw <- dat2_raw %>% mutate(pval = as.numeric(pval))
+dat3_raw <- dat3_raw %>% mutate(pval = as.numeric(pval))
+
+is_numeric_string <- function(x) {
+  !is.na(suppressWarnings(as.numeric(x)))
+}
+
+
+list_dat_raw <- list(dat1_raw, dat2_raw, dat3_raw)
+
+list_dat_processed <- map(list_dat_raw, ~ {
+  .x %>%
+    rowwise() %>%
+    mutate(
+      is_num = is_numeric_string(as.character(overlapNeg)),
+      temp_rank = if (is_num) as.numeric(overlapNeg) else rank,
+      temp_gene_ratio = if (is_num) rank else GeneRatio,
+      overlapNeg = if (is_num) "" else overlapNeg,
+      rank = temp_rank,
+      GeneRatio = temp_gene_ratio
+    ) %>%
+    ungroup() %>%
+    dplyr::select(-is_num, -temp_rank, -temp_gene_ratio)
+})
+dat1_processed <- list_dat_processed[[1]]
+dat2_processed <- list_dat_processed[[2]]
+dat3_processed <- list_dat_processed[[3]]
+
+Pathways_gmt_files <- c(
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/h.all.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.reactome.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.kegg_medicus.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c5.go.bp.v2024.1.Hs.symbols.gmt"
+)
+
+all_pathways_genes <- list()
+for (gmt_file in Pathways_gmt_files) {
+  pathways_from_file <- gmtPathways(gmt_file)
+  all_pathways_genes <- c(all_pathways_genes, pathways_from_file)
+}
+
+pathway_theoretical_sizes <- data.frame(
+  pathway = names(all_pathways_genes),
+  k = unlist(lapply(all_pathways_genes, length))
+)
+
+dat1_top10 <- dat1_processed %>% arrange(padj) %>% head(10)
+dat2_top10 <- dat2_processed %>% arrange(padj) %>% head(10)
+dat3_top10 <- dat3_processed %>% arrange(padj) %>% head(10)
+
+all_top_pathways_unique <- bind_rows(
+  dat1_top10 %>% dplyr::select(pathway),
+  dat2_top10 %>% dplyr::select(pathway),
+  dat3_top10 %>% dplyr::select(pathway)
+) %>% distinct(pathway) 
+
+all_treatments_df <- tibble(Traitement = c("Certolizumab", "Infliximab", "IpiNivo"))
+
+full_combinations_for_radar <- expand_grid(pathway = all_top_pathways_unique$pathway,
+                                           Traitement = all_treatments_df$Traitement)
+
+all_results_processed <- bind_rows(dat1_processed, dat2_processed, dat3_processed)
+
+dat <- full_combinations_for_radar %>%
+  left_join(all_results_processed, by = c("pathway", "Traitement"))
+
+dat$Classe <- c("IFN","IFN","IFN","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","CYTOKINE","CYTOKINE","CYTOKINE","CYTOKINE","CYTOKINE","CYTOKINE","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","IFN","IFN","IFN","IFN","IFN","IFN","OtherMHC","OtherMHC","OtherMHC","IFN","IFN","IFN","ImmuneDef","ImmuneDef","ImmuneDef","Other","Other","Other","Other","Other","Other","OtherMHC","OtherMHC","OtherMHC")
+
+dat <- na.omit(dat)
+
+gene_sums <- rowSums(CD8@assays$RNA$counts)
+genes_to_keep <- names(gene_sums[gene_sums > 0])
+CD8@assays$RNA$counts <- CD8@assays$RNA$counts[genes_to_keep, ]
+universe_genes <- rownames(CD8@assays$RNA$counts)
+N <- length(universe_genes)
+
+dat <- dat %>%
+  left_join(pathway_theoretical_sizes, by = "pathway") %>%
+  mutate(N = N) 
+
+dat <- dat %>%
+  mutate(
+    x = as.numeric(overlap), 
+    M = as.numeric(size)     
+  ) %>%
+  mutate(FE = (x / k) / (M / N))
+
+
+dat_radar <- dat %>%
+  dplyr::select(pathway, Traitement, Classe, FE)
+
+pathways_with_classes <- dat_radar %>%
+  distinct(pathway, Classe) %>%
+  arrange(Classe, pathway)
+
+ordered_pathways <- pathways_with_classes$pathway
+
+df_radar_wide <- dat_radar %>%
+  dplyr::select(pathway, Traitement, FE) %>%
+  pivot_wider(names_from = pathway, values_from = FE) %>%
+  rename(group = Traitement)
+
+df_radar_wide <- df_radar_wide %>%
+  mutate(across(-group, ~ replace_na(.x, 0)))
+
+cols_to_transform_and_normalize <- names(df_radar_wide)[names(df_radar_wide) != "group"]
+
+df_radar_transformed_normalized <- df_radar_wide %>%
+  mutate(across(all_of(cols_to_transform_and_normalize), ~ {
+    transformed_values <- log2(. + 1) 
+    
+    min_val_transformed <- 0
+    max_val_transformed <- max(transformed_values, na.rm = TRUE)
+    
+    if (min_val_transformed == max_val_transformed) {
+      return(0.5)
+    } else {
+      return((transformed_values - min_val_transformed) / (max_val_transformed - min_val_transformed))
+    }
+  }))
+
+df_radar_final <- df_radar_transformed_normalized %>%
+  dplyr::select(group, all_of(ordered_pathways))
+
+couleurs_traitements <- c(
+  "Infliximab" = "#4570b6",
+  "Certolizumab" = "#5f4a95",
+  "IpiNivo" = "#46b9ab"
+)
+
+df_long <- df_radar_final %>%
+  rename(Traitement = group) %>%
+  pivot_longer(
+    cols = -Traitement,
+    names_to = "Pathway",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Pathway = str_replace_all(Pathway, "_", " "),
+    Pathway = str_wrap(Pathway, width = 30) 
+  ) %>%
+  mutate(Traitement = factor(Traitement, levels = names(couleurs_traitements))) %>%
+  mutate(Pathway = factor(Pathway, levels = rev(unique(Pathway))))
+
+
+plot_radar_values <- ggplot(df_long, aes(x = Value, y = Pathway, fill = Traitement)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.5) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.2),
+    expand = c(0.01, 0.01)
+  ) +
+  scale_fill_manual(values = couleurs_traitements) +
+  labs(
+    title = "Valeurs des Pathways par Traitement",
+    x = "Fold Enrichment",
+    y = "Pathways"
+  ) +
+  theme_my() + 
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    legend.position = "bottom",
+    plot.title = element_text(hjust = 0.5)
+  )
+
+print(plot_radar_values)
+
+
+```
+
+<br>
+
+```{r, eval=FALSE}
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+
+path_figures <- "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/DATA_SOUMISSION/Tableaux_CD8/"
+
+dat1_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/FIGURES/PROGENY_Et_Autres/ORA_pct_02/RES_ORA/ORA_RESULTS_2_Certolizumab_S6_vs_2_Certolizumab_S1.txt",sep ="")
+dat2_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/FIGURES/PROGENY_Et_Autres/ORA_pct_02/RES_ORA/ORA_RESULTS_2_Infliximab_S6_vs_2_Infliximab_S1.txt",sep ="")
+dat3_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/FIGURES/PROGENY_Et_Autres/ORA_pct_02/RES_ORA/ORA_RESULTS_2_Ipi-Nivo_S6_vs_2_Ipi-Nivo_S1.txt",sep ="")
+
+dat1_raw$Traitement <- "Certolizumab"
+dat2_raw$Traitement <- "Infliximab"
+dat3_raw$Traitement <- "IpiNivo"
+
+dat1_raw <- dat1_raw %>% mutate(pval = as.numeric(pval))
+dat2_raw <- dat2_raw %>% mutate(pval = as.numeric(pval))
+dat3_raw <- dat3_raw %>% mutate(pval = as.numeric(pval))
+
+is_numeric_string <- function(x) {
+  !is.na(suppressWarnings(as.numeric(x)))
+}
+
+list_dat_raw <- list(dat1_raw, dat2_raw, dat3_raw)
+
+list_dat_processed <- purrr::map(list_dat_raw, ~ {
+  .x %>%
+    rowwise() %>%
+    mutate(
+      is_num = is_numeric_string(as.character(overlapNeg)),
+      temp_rank = if (is_num) as.numeric(overlapNeg) else rank,
+      temp_gene_ratio = if (is_num) rank else GeneRatio,
+      overlapNeg = if (is_num) "" else overlapNeg,
+      rank = temp_rank,
+      GeneRatio = temp_gene_ratio
+    ) %>%
+    ungroup() %>%
+    dplyr::select(-is_num, -temp_rank, -temp_gene_ratio)
+})
+
+dat1_processed <- list_dat_processed[[1]]
+dat2_processed <- list_dat_processed[[2]]
+dat3_processed <- list_dat_processed[[3]]
+
+Pathways_gmt_files <- c(
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/h.all.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.reactome.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.kegg_medicus.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c5.go.bp.v2024.1.Hs.symbols.gmt"
+)
+
+all_pathways_genes <- list()
+for (gmt_file in Pathways_gmt_files) {
+  pathways_from_file <- gmtPathways(gmt_file)
+  all_pathways_genes <- c(all_pathways_genes, pathways_from_file)
+}
+
+dat1_top10 <- dat1_processed %>% arrange(padj) %>% head(10)
+dat2_top10 <- dat2_processed %>% arrange(padj) %>% head(10)
+dat3_top10 <- dat3_processed %>% arrange(padj) %>% head(10)
+
+all_top_pathways_unique <- bind_rows(
+  dat1_top10 %>% dplyr::select(pathway),
+  dat2_top10 %>% dplyr::select(pathway),
+  dat3_top10 %>% dplyr::select(pathway)
+) %>% distinct(pathway)
+
+all_treatments_df <- tibble(Traitement = c("Certolizumab", "Infliximab", "IpiNivo"))
+
+full_combinations_for_radar <- expand_grid(pathway = all_top_pathways_unique$pathway,
+                                           Traitement = all_treatments_df$Traitement)
+
+all_results_processed <- bind_rows(dat1_processed, dat2_processed, dat3_processed)
+
+dat <- full_combinations_for_radar %>%
+  left_join(all_results_processed, by = c("pathway", "Traitement"))
+
+dat$Classe <- c("IFN","IFN","IFN","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","CYTOKINE","CYTOKINE","CYTOKINE","CYTOKINE","CYTOKINE","CYTOKINE","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","IFN","IFN","IFN","IFN","IFN","IFN","OtherMHC","OtherMHC","OtherMHC","IFN","IFN","IFN","ImmuneDef","ImmuneDef","ImmuneDef","Other","Other","Other","Other","Other","Other","OtherMHC","OtherMHC","OtherMHC")
+
+dat <- na.omit(dat)
+
+unique_classes <- unique(dat$Classe)
+
+for (current_class in unique_classes) {
+  message(paste0("Traitement de la classe : ", current_class))
+
+  all_top_pathways_for_class <- dat %>%
+    filter(Classe == current_class)
+
+  all_genes_for_class <- all_top_pathways_for_class %>%
+    pull(overlapGenes) %>%
+    str_split(";") %>%
+    unlist() %>%
+    unique() %>%
+    as.character()
+
+  genes_to_analyze_current_class <- all_genes_for_class[all_genes_for_class %in% rownames(CD8@assays$RNA$data)]
+
+  if (length(genes_to_analyze_current_class) == 0) {
+    warning(paste0("Aucun gène de la classe '", current_class, "' n'a été trouvé dans l'objet Seurat. Skipping cette classe."))
+    next 
+  }
+
+  logFC_patient_gene_data <- tibble()
+  patients_unique <- unique(CD8@meta.data$orig.ident) 
+  
+  for (patient_id in patients_unique) {
+    cells_s1 <- rownames(CD8@meta.data %>% filter(orig.ident == patient_id, Week == "S1"))
+    cells_s6 <- rownames(CD8@meta.data %>% filter(orig.ident == patient_id, Week == "S6"))
+
+
+    if (length(cells_s1) > 0 && length(cells_s6) > 0) {
+      expr_s1 <- Seurat::GetAssayData(CD8, slot = "data")[genes_to_analyze_current_class, cells_s1, drop = FALSE]
+      expr_s6 <- Seurat::GetAssayData(CD8, slot = "data")[genes_to_analyze_current_class, cells_s6, drop = FALSE]
+
+      if(nrow(expr_s1) == 0 || nrow(expr_s6) == 0) {
+          warning(paste0("Pas de données d'expression pour les gènes de la classe '", current_class, "' pour le patient ", patient_id, ". Skipping patient."))
+          next
+      }
+
+      mean_expr_s1 <- rowMeans(expr_s1)
+      mean_expr_s6 <- rowMeans(expr_s6)
+
+      logFC_val <- mean_expr_s6 / mean_expr_s1 
+
+      patient_treatment <- CD8@meta.data %>%
+        filter(orig.ident == patient_id) %>%
+        dplyr::pull(Traitement) %>%
+        unique()
+
+      if (length(patient_treatment) == 1) {
+        temp_df <- tibble(
+          Gene = genes_to_analyze_current_class,
+          Patient = patient_id,
+          Traitement = patient_treatment,
+          LogFC_S6_S1 = logFC_val
+        )
+        logFC_patient_gene_data <- bind_rows(logFC_patient_gene_data, temp_df)
+      } else {
+        warning(paste("Problème avec le traitement du patient:", patient_id, ". Plusieurs ou aucun traitement trouvé."))
+      }
+    } else {
+      warning(paste("Données S1 ou S6 manquantes ou insuffisantes pour le patient:", patient_id, ". Patient ignoré pour l'analyse des logFC."))
+    }
+  }
+
+  if (nrow(logFC_patient_gene_data) == 0) {
+    warning(paste0("Aucune donnée de logFC n'a pu être calculée pour la classe '", current_class, "'. Skipping cette classe."))
+    next
+  }
+
+  mean_logFC_by_treatment <- logFC_patient_gene_data %>%
+    group_by(Gene, Traitement) %>%
+    summarise(Mean_LogFC = mean(LogFC_S6_S1, na.rm = TRUE), .groups = 'drop') %>%
+    pivot_wider(names_from = Traitement, values_from = Mean_LogFC,
+                names_prefix = "Mean_LogFC_") 
+
+  logFC_by_patient <- logFC_patient_gene_data %>%
+    dplyr::select(Gene, Patient, LogFC_S6_S1) %>%
+    pivot_wider(names_from = Patient, values_from = LogFC_S6_S1,
+                names_prefix = "LogFC_Patient_")
+
+  treatments <- unique(logFC_patient_gene_data$Traitement)
+  comparison_pairs <- combn(treatments, 2, simplify = FALSE)
+
+  p_value_results <- tibble(Gene = genes_to_analyze_current_class)
+
+  for (gene in genes_to_analyze_current_class) {
+    gene_data <- logFC_patient_gene_data %>% filter(Gene == gene)
+
+    for (pair in comparison_pairs) {
+      trt1 <- pair[1]
+      trt2 <- pair[2]
+
+      data_trt1 <- gene_data %>% filter(Traitement == trt1) %>% pull(LogFC_S6_S1)
+      data_trt2 <- gene_data %>% filter(Traitement == trt2) %>% pull(LogFC_S6_S1)
+
+      col_name <- paste0("P_Value_Wilcoxon_", trt1, "_vs_", trt2)
+
+      if (length(data_trt1[!is.na(data_trt1)]) > 1 && length(data_trt2[!is.na(data_trt2)]) > 1) {
+        test_result <- wilcox.test(data_trt1, data_trt2)
+        p_value_results[p_value_results$Gene == gene, col_name] <- test_result$p.value
+      } else {
+        p_value_results[p_value_results$Gene == gene, col_name] <- NA
+      }
+    }
+  }
+
+  # Tableau final
+  final_table <- mean_logFC_by_treatment %>%
+    left_join(logFC_by_patient, by = "Gene") %>%
+    left_join(p_value_results, by = "Gene") %>%
+    dplyr::select(Gene, starts_with("Mean_LogFC_"), starts_with("LogFC_Patient_"), starts_with("P_Value_Wilcoxon_"))
+
+  # Export (ajout _bis)
+  output_filename <- paste0("Resume_Genes_", current_class, "_Comparaisons_Traitements_C2.xlsx")
+  write.xlsx(final_table, file.path(path_figures, output_filename), rowNames = FALSE)
+
+  message(paste("✅ Tableau exporté pour la classe '", current_class, "' :", file.path(path_figures, output_filename)))
+}
+```
+
+<br>
+
+In this script, we focused on identifying and visualizing genes that significantly differ between treatments within the CD8 population. We first loaded pre-processed gene tables grouped into functional classes such as interferon, cytokine, immune deficiency, MHC-related, and others. From each dataset, we extracted genes with significant differential expression across treatment comparisons, then combined them into a unified gene set. For each patient, we calculated the difference in mean expression between week S6 and S1, creating a matrix of log fold changes. After filtering and ordering patients by treatment and clustering, we generated a heatmap scaled by Z-scores.
+
+```{r Fig.2.g, fig.width = 10, fig.height = 14}
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+datIFN <- read.xlsx("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/Tableaux genes du radarplot/Resume_Genes_IFN_Comparaisons_Traitements.xlsx", sheetIndex = 1)
+datCYT <- read.xlsx("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/Tableaux genes du radarplot/Resume_Genes_CYTOKINE_Comparaisons_Traitements.xlsx", sheetIndex = 1)
+datIMM <- read.xlsx("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/Tableaux genes du radarplot/Resume_Genes_ImmuneDef_Comparaisons_Traitements.xlsx", sheetIndex = 1)
+datOTH <- read.xlsx("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/Tableaux genes du radarplot/Resume_Genes_Other_Comparaisons_Traitements.xlsx", sheetIndex = 1)
+datMHC <- read.xlsx("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/Tableaux genes du radarplot/Resume_Genes_OtherMHC_Comparaisons_Traitements.xlsx", sheetIndex = 1)
+
+genesIFN1 <- datIFN %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Infliximab < 0.05) %>%
+  pull(Gene)
+genesIFN2 <- datIFN %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesIFN3 <- datIFN %>%
+  filter(P_Value_Wilcoxon_Infliximab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesCYT1 <- datCYT %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Infliximab < 0.05) %>%
+  pull(Gene)
+genesCYT2 <- datCYT %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesCYT3 <- datCYT %>%
+  filter(P_Value_Wilcoxon_Infliximab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesIMM1 <- datIMM %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Infliximab < 0.05) %>%
+  pull(Gene)
+genesIMM2 <- datIMM %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesIMM3 <- datIMM %>%
+  filter(P_Value_Wilcoxon_Infliximab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesMHC1 <- datMHC %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Infliximab < 0.05) %>%
+  pull(Gene)
+genesMHC2 <- datMHC %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesMHC3 <- datMHC %>%
+  filter(P_Value_Wilcoxon_Infliximab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesOTH1 <- datOTH %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Infliximab < 0.05) %>%
+  pull(Gene)
+genesOTH2 <- datOTH %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesOTH3 <- datOTH %>%
+  filter(P_Value_Wilcoxon_Infliximab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+
+all_genes <- union(genesIFN1, genesIFN2)
+all_genes <- union(all_genes, genesIFN3)
+all_genes <- union(all_genes, genesCYT1)
+all_genes <- union(all_genes, genesCYT2)
+all_genes <- union(all_genes, genesCYT3)
+all_genes <- union(all_genes, genesIMM1)
+all_genes <- union(all_genes, genesIMM2)
+all_genes <- union(all_genes, genesIMM3)
+all_genes <- union(all_genes, genesMHC1)
+all_genes <- union(all_genes, genesMHC2)
+all_genes <- union(all_genes, genesMHC3)
+all_genes <- union(all_genes, genesOTH1)
+all_genes <- union(all_genes, genesOTH2)
+all_genes <- union(all_genes, genesOTH3)
+
+
+CD8_expr <- as.data.frame(Seurat::GetAssayData(CD8, slot = "data"))
+CD8_meta <- CD8@meta.data %>%
+  tibble::rownames_to_column("barcode")
+
+patients <- unique(CD8_meta$orig.ident)
+
+genes_for_heatmap <- all_genes[all_genes %in% rownames(CD8_expr)]
+
+heatmap_matrix <- matrix(NA, nrow = length(genes_for_heatmap), ncol = length(patients),
+                         dimnames = list(genes_for_heatmap, patients))
+
+for (patient_id in patients) {
+  patient_cells_meta <- CD8_meta %>%
+    filter(orig.ident == patient_id)
+
+  s1_cells <- patient_cells_meta %>% filter(Week == "S1") %>% pull(barcode)
+  s6_cells <- patient_cells_meta %>% filter(Week == "S6") %>% pull(barcode)
+
+  if (length(s1_cells) > 0 && length(s6_cells) > 0) {
+    mean_expr_s1 <- rowMeans(CD8_expr[genes_for_heatmap, s1_cells, drop = FALSE])
+    mean_expr_s6 <- rowMeans(CD8_expr[genes_for_heatmap, s6_cells, drop = FALSE])
+
+    ratio_s6_s1_values <- mean_expr_s6 - mean_expr_s1
+    heatmap_matrix[, patient_id] <- ratio_s6_s1_values
+  } else {
+    warning(paste("Données S1 ou S6 manquantes ou insuffisantes pour le patient:", patient_id, ". Ce patient sera omis ou aura des NAs."))
+  }
+}
+
+heatmap_matrix[is.infinite(heatmap_matrix)] <- NA
+heatmap_matrix[is.na(heatmap_matrix)] <- 0
+
+heatmap_matrix_clean <- heatmap_matrix[, colSums(is.na(heatmap_matrix)) < nrow(heatmap_matrix), drop = FALSE]
+heatmap_matrix_clean <- heatmap_matrix_clean[rowSums(is.na(heatmap_matrix_clean)) < ncol(heatmap_matrix_clean), , drop = FALSE]
+
+if (ncol(heatmap_matrix_clean) == 0 || nrow(heatmap_matrix_clean) == 0) {
+  stop("La matrice de la heatmap est vide après le filtrage des patients et des gènes. Vérifiez vos données.")
+}
+
+patient_treatment_map <- CD8@meta.data %>%
+  tibble::rownames_to_column("barcode_column") %>%
+  dplyr::select(orig.ident, Traitement, Reponse) %>%
+  distinct() %>%
+  tibble::column_to_rownames("orig.ident")
+
+annotation_patient_df_clean <- patient_treatment_map[colnames(heatmap_matrix_clean), , drop = FALSE]
+
+desired_treatment_order <- c("Ipi-Nivo", "Certolizumab", "Infliximab")
+annotation_patient_df_clean$Traitement <- factor(annotation_patient_df_clean$Traitement, levels = desired_treatment_order)
+
+desired_response_order <- c("R", "NR")
+annotation_patient_df_clean$Reponse <- factor(annotation_patient_df_clean$Reponse, levels = desired_response_order)
+
+ordered_patient_ids_final <- c()
+
+for (treatment in desired_treatment_order) {
+  patients_in_treatment <- rownames(annotation_patient_df_clean[annotation_patient_df_clean$Traitement == treatment, , drop = FALSE])
+
+  if (length(patients_in_treatment) > 1) {
+    sub_matrix <- heatmap_matrix_clean[, patients_in_treatment, drop = FALSE]
+
+    if (nrow(sub_matrix) > 0 && ncol(sub_matrix) > 0 && var(as.vector(sub_matrix), na.rm = TRUE) > 1e-9) {
+      dist_patients <- dist(t(sub_matrix))
+      hc_patients <- hclust(dist_patients)
+      ordered_patient_ids_final <- c(ordered_patient_ids_final, hc_patients$labels[hc_patients$order])
+    } else {
+        ordered_patient_ids_final <- c(ordered_patient_ids_final, patients_in_treatment[order(patients_in_treatment)])
+    }
+  } else if (length(patients_in_treatment) == 1) {
+    ordered_patient_ids_final <- c(ordered_patient_ids_final, patients_in_treatment)
+  }
+}
+
+heatmap_matrix_ordered <- heatmap_matrix_clean[, ordered_patient_ids_final, drop = FALSE]
+
+annotation_patient_df_ordered <- annotation_patient_df_clean[ordered_patient_ids_final, , drop = FALSE]
+
+all_p_values_df <- bind_rows(
+  datIFN %>% dplyr::select(Gene, starts_with("P_Value_Wilcoxon_")),
+  datCYT %>% dplyr::select(Gene, starts_with("P_Value_Wilcoxon_")),
+  datIMM %>% dplyr::select(Gene, starts_with("P_Value_Wilcoxon_")),
+  datMHC %>% dplyr::select(Gene, starts_with("P_Value_Wilcoxon_")),
+  datOTH %>% dplyr::select(Gene, starts_with("P_Value_Wilcoxon_"))
+) %>%
+  distinct(Gene, .keep_all = TRUE) 
+
+genes_in_heatmap <- rownames(heatmap_matrix_ordered)
+annotation_gene_df <- data.frame(row.names = genes_in_heatmap)
+
+create_significance_column <- function(data_p_values, p_value_col_name, genes_to_annotate, threshold = 0.05) {
+  sig_vector <- rep(FALSE, length(genes_to_annotate))
+  names(sig_vector) <- genes_to_annotate
+
+  significant_genes_from_source <- data_p_values %>%
+    filter(get(p_value_col_name) < threshold) %>%
+    pull(Gene)
+
+  sig_vector[genes_to_annotate %in% significant_genes_from_source] <- TRUE
+
+  return(sig_vector)
+}
+
+annotation_gene_df$`Sig. Certo vs Inflix` <- create_significance_column(
+  all_p_values_df, "P_Value_Wilcoxon_Certolizumab_vs_Infliximab", genes_in_heatmap
+)
+
+annotation_gene_df$`Sig. Certo vs Ipi-Nivo` <- create_significance_column(
+  all_p_values_df, "P_Value_Wilcoxon_Certolizumab_vs_Ipi.Nivo", genes_in_heatmap
+)
+
+annotation_gene_df$`Sig. Inflix vs Ipi-Nivo` <- create_significance_column(
+  all_p_values_df, "P_Value_Wilcoxon_Infliximab_vs_Ipi.Nivo", genes_in_heatmap
+)
+
+for (col_name in colnames(annotation_gene_df)) {
+  if (is.logical(annotation_gene_df[[col_name]])) {
+    annotation_gene_df[[col_name]] <- factor(
+      ifelse(annotation_gene_df[[col_name]], "Oui", "Non"), 
+      levels = c("Non", "Oui") 
+    )
+  }
+}
+
+annotation_gene_df <- annotation_gene_df[rownames(heatmap_matrix_ordered), , drop = FALSE]
+
+annotation_colors_rows <- list(
+  `Sig. Certo vs Inflix` = c("Non" = "lightgrey", "Oui" = "yellow"), # "Non" doit être le premier niveau
+  `Sig. Certo vs Ipi-Nivo` = c("Non" = "lightgrey", "Oui" = "yellow"),
+  `Sig. Inflix vs Ipi-Nivo` = c("Non" = "lightgrey", "Oui" = "yellow")
+)
+
+annotation_colors <- list(
+  Traitement = c("Certolizumab" = "#5f4a95", "Infliximab" = "#4570b6", "Ipi-Nivo" = "#46b9ab"),
+  Reponse = c("R" = "darkgreen", "NR" = "darkred")
+)
+
+annotation_colors_all <- c(annotation_colors, annotation_colors_rows)
+
+colors <- rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu"))
+colors.use <- colorRampPalette(colors)(100)
+
+scaled_heatmap_matrix <- t(scale(t(heatmap_matrix_ordered)))
+
+my_breaks <- c(
+  seq(min(scaled_heatmap_matrix, na.rm = TRUE)+2, 0, length.out = 51),
+  seq(0.001, max(scaled_heatmap_matrix, na.rm = TRUE)-2, length.out = 50)
+)
+
+P_heatmap_obj <- pheatmap(
+  scaled_heatmap_matrix,
+  color = colors.use,
+  breaks = my_breaks,
+  cluster_rows = TRUE, 
+  cluster_cols = FALSE,
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  annotation_col = annotation_patient_df_ordered,
+  annotation_row = annotation_gene_df, 
+  annotation_colors = annotation_colors_all, 
+  main = "Expression des Gènes (Z-score logFC S6 vs S1) par Patient et Significativité",
+  fontsize_row = 8,
+  fontsize_col = 8,
+  gaps_col = cumsum(table(annotation_patient_df_ordered$Traitement))[1:(length(desired_treatment_order)-1)]
+)
+print(P_heatmap_obj)
+# ggsave("HM_CD8.svg",plot= P_heatmap_obj,path = "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/Figures_clean_finales/",height = 15, width = 10)
+
+```
+
+<br>
+
+Genes of interest expression boxplots
+
+```{r Fig.2.h, fig.width = 7, fig.height = 5}
+genes_interest <- c("FOXO1", "MYH9", "GCH1", "JMJD6", "FOXO1", "TCF7","ICOS")
+
+df_plot <- heatmap_matrix_ordered[genes_interest, , drop = FALSE] %>%
+  as.data.frame() %>%
+  rownames_to_column("Gene") %>%
+  pivot_longer(-Gene, names_to = "Patient", values_to = "Expression")
+
+traitement_par_patient <- CD8@meta.data %>%
+  dplyr::select(orig.ident, Traitement) %>%
+  distinct() %>%
+  tibble::deframe()
+
+df_plot <- df_plot %>%
+  mutate(Traitement = traitement_par_patient[Patient])
+
+df_plot <- df_plot %>%
+  mutate(Traitement = factor(
+    Traitement,
+    levels = c("Ipi-Nivo", "Certolizumab", "Infliximab")
+  ))
+
+for (gene in genes_interest) {
+  df_gene <- df_plot %>%
+    filter(Gene == gene)
+  
+    P <- ggplot(df_gene, aes(x = Traitement, y = Expression, fill = Traitement)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+    geom_jitter(width = 0.2, size = 1, alpha = 0.6) +
+    labs(title = paste0("Expression de ", gene),
+         x = "Traitement",
+         y = "Expression") +
+    theme_my() +
+    scale_fill_manual(values = c(
+      "Ipi-Nivo"    = "#46b9ab",
+      "Certolizumab" = "#5f4a95",
+      "Infliximab"  = "#4570b6"
+      
+    )) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    ggsave(filename = paste0("Boxplot_",gene,".svg"),plot = P, path = "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/Figures_clean_finales/",width=5,height=3)
+    print(P)
+}
+
+```
+
+<br>
+
+In this analysis we infered transcription factor (TF) activities from CD8 cells using a pseudo-bulk approach. We grouped cells by cluster, treatment, response, and timepoint, then computed weighted mean TF activity scores across conditions. We selected top TFs with the largest variation between S1 and S6, focusing in particular on IRF and STAT family. Finally, we built a heatmap of S6–S1 activity differences, annotated by treatment and patient response, and complemented with Wilcoxon tests to highlight treatment-specific significant changes.
+
+```{r Fig.2.i, fig.width = 9, fig.height = 4}
+###
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+
+path_figures <- "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD8/FIGURES/PROGENY_Et_Autres/TFs/"
+
+net <- get_collectri(organism = 'human', split_complexes = FALSE)
+
+meta <- CD8@meta.data %>%
+  rownames_to_column(var = "cell") %>%
+  dplyr::select(cell, seurat_clusters = RNA_snn_res.0.2, Traitement, Week)
+
+groups <- meta %>%
+  mutate(grp = paste0("C", seurat_clusters, "_", Traitement, "_" , Week)) %>%
+  pull(grp) %>%
+  unique()
+
+results_pb <- vector("list", length(groups))
+names(results_pb) <- groups
+
+for (grp in groups) {
+  
+  cells_grp <- meta %>% filter(paste0("C", seurat_clusters, "_", Traitement, "_", Week) == grp) %>% pull(cell)
+  sub       <- subset(CD8, cells = cells_grp)
+ 
+  mat_norm  <- GetAssayData(sub, assay = "RNA", slot = "data")
+  pb_vec    <- Matrix::rowSums(mat_norm)  # pseudo-bulk par somme
+  pb_mat    <- matrix(pb_vec, ncol = 1, dimnames = list(names(pb_vec), grp))
+  
+  acts_pb   <- run_wmean(
+    mat     = as.matrix(pb_mat),
+    net     = net,
+    .source = "source",
+    .target = "target",
+    .mor    = "mor",
+    times   = 100,
+    minsize = 5
+  )
+  
+  results_pb[[grp]] <- acts_pb
+}
+
+actsW_pseudobulk <- bind_rows(results_pb, .id = "pseudo_bulk_group") %>%
+  as_tibble()
+
+acts_norm <- actsW_pseudobulk %>%
+  filter(statistic == "norm_wmean") %>%
+  mutate(condition = str_remove(pseudo_bulk_group, "_S[0-9]+$"),
+         week = str_extract(pseudo_bulk_group, "S[0-9]+"))
+
+top_TFs_per_condition <- acts_norm %>%
+  dplyr::select(source, score, condition, week) %>%
+  pivot_wider(names_from = week, values_from = score) %>%
+  filter(!is.na(S1) & !is.na(S6)) %>%
+  mutate(var = abs(S6 - S1)) %>%
+  group_by(condition) %>%
+  slice_max(order_by = var, n = 5) %>%
+  ungroup()
+
+selected_TFsBASE <- unique(top_TFs_per_condition$source)
+
+###
+
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+
+CD8 <- subset(CD8, RNA_snn_res.0.2 =="2")
+CD8 <- subset(CD8, orig.ident == "M28", invert = TRUE)
+
+net <- get_collectri(organism = 'human', split_complexes = FALSE)
+
+meta <- CD8@meta.data %>%
+  rownames_to_column(var = "cell") %>%
+  dplyr::select(cell, seurat_clusters = RNA_snn_res.0.2, Traitement, Week, orig.ident, Reponse)
+
+groups <- meta %>%
+  mutate(grp = paste0("C", seurat_clusters, "_",orig.ident, "_", Traitement, "_", Reponse, "_" , Week)) %>%
+  pull(grp) %>%
+  unique()
+
+results_pb <- vector("list", length(groups))
+names(results_pb) <- groups
+
+for (grp in groups) {
+  
+  
+  cells_grp <- meta %>% filter(paste0("C", seurat_clusters, "_",orig.ident, "_", Traitement, "_", Reponse, "_" , Week) == grp) %>% pull(cell)
+  sub       <- subset(CD8, cells = cells_grp)
+ 
+  mat_norm  <- GetAssayData(sub, assay = "RNA", slot = "data")
+  pb_vec    <- Matrix::rowSums(mat_norm)  
+  pb_mat    <- matrix(pb_vec, ncol = 1, dimnames = list(names(pb_vec), grp))
+  
+  acts_pb   <- run_wmean(
+    mat     = as.matrix(pb_mat),
+    net     = net,
+    .source = "source",
+    .target = "target",
+    .mor    = "mor",
+    times   = 100,
+    minsize = 5
+  )
+  
+  results_pb[[grp]] <- acts_pb
+}
+
+actsW_pseudobulk <- bind_rows(results_pb, .id = "pseudo_bulk_group") %>%
+  as_tibble()
+
+
+acts_norm <- actsW_pseudobulk %>%
+  filter(statistic == "norm_wmean") %>%
+  mutate(condition = str_remove(pseudo_bulk_group, "_S[0-9]+$"),
+         week = str_extract(pseudo_bulk_group, "S[0-9]+"))
+
+top_TFs_per_condition <- acts_norm %>%
+  dplyr::select(source, score, condition, week) %>%
+  pivot_wider(names_from = week, values_from = score) %>%
+  filter(!is.na(S1) & !is.na(S6)) %>%
+  mutate(var = abs(S6 - S1)) %>%
+  group_by(condition) %>%
+  slice_max(order_by = var, n = 5) %>%
+  ungroup()
+
+selected_TFs <- unique(top_TFs_per_condition$source)
+
+tf_scores_s6_minus_s1 <- acts_norm %>%
+  filter(source %in% selected_TFsBASE, week %in% c("S1", "S6")) %>%
+
+  pivot_wider(
+    names_from = week,   
+    values_from = score, 
+    id_cols = c(condition, source) 
+  ) %>%
+  
+  mutate(score_S6_minus_S1 = abs(S6 - S1)) %>%
+  
+  dplyr::select(condition, source, S1, S6, score_S6_minus_S1, everything()) %>%
+  
+  mutate(
+    Traitement = str_match(condition, "^C2_[TM]\\d+_([^_]+)")[,2],
+    Reponse    = str_match(condition, "^C2_[TM]\\d+_[^_]+_([^_]+)$")[,2]
+  )
+
+
+tf_scores_s6_minus_s1 <- drop_na(tf_scores_s6_minus_s1)
+
+ordre_traitements <- c("Ipi-Nivo", "Certolizumab", "Infliximab") 
+tf_scores_s6_minus_s1$Traitement <- factor(tf_scores_s6_minus_s1$Traitement, levels = ordre_traitements)
+
+tf_scores_s6_minus_s1$Reponse <- factor(tf_scores_s6_minus_s1$Reponse)
+
+tf_scores_s6_minus_s1 <- tf_scores_s6_minus_s1 %>%
+  filter(source %in% c("IRF1", "IRF2", "IRF3", "STAT1"))
+
+heatmap_data_wide <- tf_scores_s6_minus_s1 %>%
+  dplyr::select(condition, source, score_S6_minus_S1) %>% 
+  pivot_wider(
+    names_from = condition,      
+    values_from = score_S6_minus_S1 
+  )
+
+heatmap_matrix <- heatmap_data_wide %>%
+  tibble::column_to_rownames(var = "source") %>% 
+  as.matrix()
+
+wilcox_results_list <- list()
+
+unique_sources <- unique(tf_scores_s6_minus_s1$source)
+
+for (gene_name in unique_sources) {
+  cat(paste0("  Gène : ", gene_name, "\n"))
+  
+  gene_data_for_test <- tf_scores_s6_minus_s1 %>%
+    filter(source == gene_name)
+  
+  treatments_for_gene <- unique(gene_data_for_test$Traitement)
+  
+  if (length(treatments_for_gene) < 2) {
+    cat(paste0("    Pas assez de traitements différents pour le gène ", gene_name, ". Skipping.\n"))
+    next
+  }
+  
+  treatment_pairs <- combn(treatments_for_gene, 2, simplify = FALSE)
+  
+  gene_p_values <- data.frame()
+  
+  for (pair in treatment_pairs) {
+    trt1 <- pair[1]
+    trt2 <- pair[2]
+    
+    data_trt1 <- gene_data_for_test %>%
+      filter(Traitement == trt1) %>%
+      pull(score_S6_minus_S1)
+    
+    data_trt2 <- gene_data_for_test %>%
+      filter(Traitement == trt2) %>%
+      pull(score_S6_minus_S1)
+    
+    if (length(data_trt1) > 0 && length(data_trt2) > 0) {
+      test_result <- tryCatch({
+        wilcox.test(data_trt1, data_trt2)
+      }, error = function(e) {
+        cat(paste0("    Erreur pour ", gene_name, " (", trt1, " vs ", trt2, "): ", e$message, "\n"))
+        list(p.value = NA_real_)
+      })
+      
+      gene_p_values <- bind_rows(gene_p_values, tibble(
+        group1 = trt1,
+        group2 = trt2,
+        p = test_result$p.value 
+      ))
+    } else {
+      cat(paste0("    Données insuffisantes pour la comparaison ", trt1, " vs ", trt2, " pour le gène ", gene_name, ". Skipping.\n"))
+    }
+  }
+  
+  if (nrow(gene_p_values) > 0) {
+    gene_p_values$gene <- gene_name 
+    wilcox_results_list[[gene_name]] <- gene_p_values
+  } else {
+    cat(paste0("    Aucune p-value calculée pour le gène ", gene_name, ".\n"))
+  }
+}
+
+wilcox_all_results_base <- bind_rows(wilcox_results_list)
+
+significance_threshold <- 0.05
+
+wilcox_all_results_base <- wilcox_all_results_base %>%
+  mutate(comparison_id = paste0(group1, "_vs_", group2))
+
+annotation_df_wide <- wilcox_all_results_base %>%
+  dplyr::select(gene, comparison_id, p) %>%
+  pivot_wider(
+    names_from = comparison_id,
+    values_from = p,
+    values_fill = NA_real_ 
+  ) %>%
+  mutate(across(starts_with("Certolizumab_vs_") | starts_with("Infliximab_vs_") | starts_with("Adalimumab_vs_"),
+                ~ ifelse(.x < significance_threshold, "oui", "non"))) 
+
+unique_sources_all <- unique(tf_scores_s6_minus_s1$source) 
+final_row_annotation_multi_col <- tibble(source = unique_sources_all) %>%
+  left_join(annotation_df_wide, by = c("source" = "gene")) %>%
+  mutate(across(starts_with("Certolizumab_vs_") | starts_with("Infliximab_vs_"),
+                ~ replace_na(.x, "non"))) %>%
+  column_to_rownames(var = "source") 
+
+for (col_name in colnames(final_row_annotation_multi_col)) {
+  final_row_annotation_multi_col[[col_name]] <- factor(final_row_annotation_multi_col[[col_name]], levels = c("non", "oui"))
+}
+
+heatmap_matrix <- tf_scores_s6_minus_s1 %>%
+  dplyr::select(condition, source, score_S6_minus_S1) %>%
+  pivot_wider(
+    names_from = condition,
+    values_from = score_S6_minus_S1
+  ) %>%
+  tibble::column_to_rownames(var = "source") %>%
+  as.matrix()
+
+column_info <- tf_scores_s6_minus_s1 %>%
+  distinct(condition, Traitement, Reponse) %>%
+  filter(condition %in% colnames(heatmap_matrix)) %>%
+  arrange(Traitement) 
+
+ordered_colnames <- column_info$condition
+if(length(ordered_colnames) == 0 || !all(ordered_colnames %in% colnames(heatmap_matrix))) {
+  warning("Les noms de colonnes triés ne correspondent pas entièrement aux noms de colonnes de la matrice de la heatmap. Vérifiez les conditions et traitements.")
+  heatmap_matrix_ordered <- heatmap_matrix
+  annotation_col_df <- data.frame(Traitement = rep("Unknown", ncol(heatmap_matrix)), row.names = colnames(heatmap_matrix))
+} else {
+  heatmap_matrix_ordered <- heatmap_matrix[, ordered_colnames, drop = FALSE]
+  annotation_col_df <- column_info %>%
+    tibble::column_to_rownames(var = "condition") %>%
+    dplyr::select(Traitement,Reponse)
+}
+
+ann_colors_rows_list <- list()
+for (col_name in colnames(final_row_annotation_multi_col)) {
+  ann_colors_rows_list[[col_name]] <- c("oui" = "yellow", "non" = "lightgrey") 
+}
+
+annotation_colors <- list(
+  Traitement = c("Certolizumab" = "#5f4a95", "Infliximab" = "#4570b6", "Ipi-Nivo" = "#46b9ab"),
+  Reponse = c("R" = "darkgreen", "NR" = "darkred")
+)
+
+all_ann_colors <- c(ann_colors_rows_list, annotation_colors)
+
+
+scaled_matrix <- t(scale(t(heatmap_matrix_ordered), center = TRUE))
+
+max_abs_val <- max(abs(scaled_matrix), na.rm = TRUE)
+
+breaks_list <- seq(-max_abs_val, max_abs_val, length.out = 101) 
+
+color_palette <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(100) 
+
+desired_treatment_order <- c("Certolizumab", "Infliximab", "Ipi-Nivo")
+
+annotation_col_df$Traitement <- factor(
+  annotation_col_df$Traitement,
+  levels = desired_treatment_order
+)
+
+annotation_col_df$Reponse <- as.character(annotation_col_df$Reponse)
+
+annotation_col_df <- annotation_col_df %>%
+  mutate(Reponse = ifelse(grepl("T5", rownames(annotation_col_df)), "R", Reponse))
+
+annotation_col_df$Reponse <- factor(annotation_col_df$Reponse, levels = c("R", "NR"))
+
+ordered_colnames <- rownames(annotation_col_df)[
+  order(annotation_col_df$Traitement)
+]
+
+heatmap_matrix_ordered <- heatmap_matrix[, ordered_colnames, drop = FALSE]
+
+annotation_col_df_ordered <- annotation_col_df[ordered_colnames, , drop = FALSE]
+
+cols_per_trt <- table(annotation_col_df_ordered$Traitement)[desired_treatment_order]
+gaps_positions <- c(7,15)
+
+pheatmap(
+  mat            = scaled_matrix,              
+  color          = color_palette,
+  breaks         = breaks_list,
+  cluster_rows   = FALSE,
+  cluster_cols   = FALSE,                      
+  show_rownames  = TRUE,
+  show_colnames  = TRUE,
+  annotation_row = final_row_annotation_multi_col,
+  annotation_col = annotation_col_df_ordered,
+  annotation_colors = all_ann_colors,
+  gaps_col       = gaps_positions,             
+  fontsize_row   = 8,
+  fontsize_col   = 8,
+  main           = "Scores S6-S1 par condition et gène (Centré sur 0)"
+  
+)
+
+```
+
+<br>
+<br>
+
+# Supplementary Figures
+
+<br>
+
+```{r Extended data Fig.2.a}
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+
+DefaultAssay(CD8) <- 'ADT'
+FeaturePlot(CD8, reduction = "umap.cca", features = c("CD3","CD8","CD62L","CD45RA","HLA-DR","CD4"),cols = c("lightgrey", "#fd3f92"))
+
+```
+
+<br>
+
+```{r Extended data Fig.2.b, fig.width=9, fig.height=2, warning=F}
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+  
+CD8$Cluster_Rep <- paste(CD8$Reponse, CD8$Week, sep = "_")
+CD8$Traitement_Week <- paste(CD8$Traitement, CD8$Week, sep = "_")
+
+ppt <- CD8@meta.data %>%
+  as.data.frame() %>%
+  dplyr::group_by(Name, cca_clusters, Cluster_Rep, Traitement) %>%
+  summarise(n = n()) %>%
+  dplyr::group_by(Name, Cluster_Rep,Traitement) %>%
+  summarise(freq = n / sum(n), cca_clusters) %>%
+  as.data.frame()
+
+ppt <- ppt %>%
+  mutate(Type = case_when(
+    cca_clusters == 6 ~ "Cluster6"))
+
+ppt$Traitement_Cluster <- paste0(ppt$Traitement, "_", ppt$cca_clusters)
+
+ppt$Traitement_Cluster <- factor(ppt$Traitement_Cluster, levels = c(
+  "Certolizumab_6", "Infliximab_6", "Ipi-Nivo_6"))
+
+ppt$group <- substr(ppt$Name, 1, 3)
+ppt <- dplyr::mutate(ppt, Patient = as.factor(group))
+
+ppt <- drop_na(ppt)
+
+color_map <- c(
+  "Certolizumab" = "#5f4a95",
+  "Infliximab"  = "#4570b6",
+  "Ipi-Nivo"    = "#46b9ab"
+)
+
+all_plots <- list()
+
+for (cluster in unique(ppt$cca_clusters)) {
+  for (traitement in unique(ppt$Traitement)) {
+    
+    filtered_data <- ppt %>%
+      filter(cca_clusters == cluster & Traitement == traitement)
+    
+    filtered_data <- filtered_data %>%
+      mutate(Cluster_Rep_Simplified = case_when(
+        str_detect(Cluster_Rep, "S1") ~ "S1",
+        str_detect(Cluster_Rep, "S6") ~ "S6",
+        TRUE ~ NA_character_
+      )) %>%
+      filter(!is.na(Cluster_Rep_Simplified))
+    
+    p_value <- if (all(c("S1", "S6") %in% filtered_data$Cluster_Rep_Simplified)) {
+      wilcox.test(
+        filtered_data$freq[filtered_data$Cluster_Rep_Simplified == "S1"],
+        filtered_data$freq[filtered_data$Cluster_Rep_Simplified == "S6"],
+        exact = FALSE
+      )$p.value
+    } else {
+      NA
+    }
+    
+    title <- paste0("Cluster ", cluster, " - ", traitement, ": ", 
+                    ifelse(!is.na(p_value) & p_value < 0.05, "*", "ns"))
+    
+    plot <- ggplot(filtered_data, aes(
+      x = Cluster_Rep_Simplified,
+      y = freq,
+      color = Traitement,     
+      group = Patient         
+    )) +
+      geom_point() +
+      geom_line() +
+      scale_color_manual(values = color_map) +  
+      labs(title = title, x = "Cluster Rep (Simplified)", y = "Frequency") +
+      ylim(0, 0.2) +
+      theme_my() +
+      theme(legend.position = "none")
+    
+    all_plots[[paste0("Cluster_", cluster, "_", traitement)]] <- plot
+  }
+}
+
+combined_plot <- wrap_plots(all_plots, ncol = 4)
+
+print(combined_plot)
+
+
+```
+
+
+```{r Extended data Fig.2.c/d/e}
+CD8=readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+
+DefaultAssay(CD8)="RNA"
+CD8$Essai <- ifelse(CD8@meta.data$Traitement == "Ipi-Nivo", "MELANF", ifelse(CD8@meta.data$Traitement %in% c("Infliximab", "Certolizumab"), "TICIMEL", NA))
+
+Pathways=c("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/h.all.v2024.1.Hs.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.reactome.v2024.1.Hs.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.kegg_medicus.v2024.1.Hs.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c5.go.bp.v2024.1.Hs.symbols.gmt" )
+
+
+CD8$condition=paste0(CD8$RNA_snn_res.0.2,"_",CD8$Traitement,"_",CD8$Week)
+Idents(CD8)=CD8$condition
+
+condition=list(c("2_Certolizumab_S6","2_Certolizumab_S1"),
+               c("2_Infliximab_S6","2_Infliximab_S1"),
+               c("2_Ipi-Nivo_S6","2_Ipi-Nivo_S1"))
+
+for(condi in condition){
+  print(condi)
+  Idents(CD8)=CD8$condition
+
+marks=FindMarkers(CD8,ident.1 =condi[[1]],ident.2 = condi[2:length(condi)] ) %>% rownames_to_column("Gene") %>% 
+  dplyr::filter(p_val_adj<0.01,(pct.1>0.2|pct.2>0.2),abs(avg_log2FC)>0.5) %>% 
+  dplyr::mutate(diff=pct.1-pct.2)
+  
+bgset=rownames(CD8)[rowSums(CD8[["RNA"]]$counts)>0]
+
+pp=lapply(Pathways, function(x){
+  
+  pathways.hallmark <- fgsea::gmtPathways(x)
+
+  
+  orr=fgsea::fora(pathways = pathways.hallmark,genes=marks$Gene,universe = bgset) %>% dplyr::filter(padj<0.01) %>% 
+    dplyr::select(-overlapGenes)
+  
+
+  return(orr)
+
+})
+
+dat=Reduce(rbind,pp) %>% dplyr::arrange((padj))
+
+plt=dat %>% dplyr::arrange((padj)) %>%
+  as.data.frame() %>% 
+  dplyr::mutate(pathway=factor(pathway,levels=rev(pathway)),
+                GeneRatio=overlap/size)
+  
+
+
+ggplot(plt[1:10,] %>%
+              dplyr::mutate(pathway=str_replace_all(pathway,"_"," ")) %>% 
+              dplyr::mutate(pathway=factor(pathway,levels=rev(pathway))),aes(x=-log10(padj),y=pathway,color=-log10(padj)))+
+  geom_point(aes(size = GeneRatio), alpha = 0.5)+
+  scale_x_continuous(expand = expansion(mult = c(0.15, 0.15))) +
+  scale_size(
+    range = c(3, 13),
+    limits = c(0, 1) 
+  ) + xlab("-log10(adjusted p-value)") +
+  theme_my()+
+  theme(legend.position = "none")+
+  scale_y_discrete(labels = scales::label_wrap(30))
+
+}
+
+
+```
+
+<br>
+
+```{r Extended data Fig.3.a, eval=FALSE}
+CD4 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA_base/CD4_SCSE_base.rds")
+
+CD4$Cluster_Rep <- paste(CD4$Reponse, CD4$Week, sep = "_")
+
+path_figures <- "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/FIGURES/"
+
+DefaultAssay(CD4) <- "RNA"
+CD4 <- FindNeighbors(CD4, reduction = "integrated.cca", dims = 1:30)
+CD4 <- FindClusters(CD4, resolution = c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0), graph.name = "RNA_snn")
+P1 <- clustree(CD4, prefix = "RNA_snn_res.", assay = "RNA")
+ggsave("Clustree.png",plot = P1, path = path_figures,width = 8, height = 15)
+
+CD4 <- FindClusters(CD4, resolution = 0.2, cluster.name = "cca_clusters")
+CD4 <- FindClusters(CD4, resolution = 0.2, graph.name = "RNA_snn")
+
+CD4 <- RunUMAP(CD4, reduction = "integrated.cca", dims = 1:30, reduction.name = "umap.cca")
+P1 <- DimPlot(CD4, reduction = "umap.cca", group.by = "Name", label = TRUE)
+ggplot2::ggsave(filename = "umap_integrated_V2.png", plot = P1, path = (path_figures), width = 8, height = 4)
+P2 <- DimPlot(CD4, reduction = "umap.cca", label = TRUE)
+ggplot2::ggsave(filename = "umap_integrated_clusters.png", plot = P2, path = (path_figures), width = 6, height = 4)
+
+CD4 <- subset(CD4, subset = FCGR3A > 0 | NCAM1 > 0, invert = TRUE)
+CD4 <- subset(CD4, subset = NCR1 > 0 , invert = TRUE)
+
+DefaultAssay(CD4) <- "RNA"
+CD4 <- FindNeighbors(CD4, reduction = "integrated.cca", dims = 1:30)
+CD4 <- FindClusters(CD4, resolution = c(0.2, 0.22,0.24,0.26,0.28, 0.3, 0.4), graph.name = "RNA_snn")
+P1 <- clustree(CD4, prefix = "RNA_snn_res.", assay = "RNA")
+ggsave("Clustree2.png",plot = P1, path = path_figures,width = 8, height = 15)
+
+CD4 <- FindClusters(CD4, resolution = 0.22, cluster.name = "cca_clusters")
+
+CD4 <- RunUMAP(CD4, reduction = "integrated.cca", dims = 1:30, reduction.name = "umap.cca")
+P1 <- DimPlot(CD4, reduction = "umap.cca", group.by = "Name", label = TRUE)
+ggplot2::ggsave(filename = "umap_integrated_V2.png", plot = P1, path = (path_figures), width = 8, height = 4)
+P2 <- DimPlot(CD4, reduction = "umap.cca", label = TRUE, label.size = 7, repel = TRUE)
+ggplot2::ggsave(filename = "umap_integrated_clusters.png", plot = P2, path = (path_figures), width = 6, height = 4)
+
+saveRDS(CD4, "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD4_SCSE.rds")
+
+
+DefaultAssay(CD4) <- 'RNA'
+Markers <- FindMarkers(CD4, ident.1 = "0")
+Markers <- rownames_to_column(Markers, var = "Gene")
+write_xlsx(Markers, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/Cluster0.xlsx")
+Markers1 <- FindMarkers(CD4, ident.1 = "1")
+Markers1 <- rownames_to_column(Markers1, var = "Gene")
+write_xlsx(Markers1, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/Cluster1.xlsx")
+Markers2 <- FindMarkers(CD4, ident.1 = "2")
+Markers2 <- rownames_to_column(Markers2, var = "Gene")
+write_xlsx(Markers2, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/Cluster2.xlsx")
+Markers3 <- FindMarkers(CD4, ident.1 = "3")
+Markers3 <- rownames_to_column(Markers3, var = "Gene")
+write_xlsx(Markers3, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/Cluster3.xlsx")
+Markers4 <- FindMarkers(CD4, ident.1 = "4")
+Markers4 <- rownames_to_column(Markers4, var = "Gene")
+write_xlsx(Markers4, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/Cluster4.xlsx")
+Markers5 <- FindMarkers(CD4, ident.1 = "5")
+Markers5 <- rownames_to_column(Markers5, var = "Gene")
+write_xlsx(Markers5, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/Cluster5.xlsx")
+Markers6 <- FindMarkers(CD4, ident.1 = "6")
+Markers6 <- rownames_to_column(Markers6, var = "Gene")
+write_xlsx(Markers6, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/Cluster6.xlsx")
+Markers7 <- FindMarkers(CD4, ident.1 = "7")
+Markers7 <- rownames_to_column(Markers7, var = "Gene")
+write_xlsx(Markers7, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/Cluster7.xlsx")
+Markers8 <- FindMarkers(CD4, ident.1 = "8")
+Markers8 <- rownames_to_column(Markers8, var = "Gene")
+write_xlsx(Markers8, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/Cluster8.xlsx")
+Markers9 <- FindMarkers(CD4, ident.1 = "9")
+Markers9 <- rownames_to_column(Markers9, var = "Gene")
+write_xlsx(Markers9, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/Cluster9.xlsx")
+Markers10 <- FindMarkers(CD4, ident.1 = "10")
+Markers10 <- rownames_to_column(Markers10, var = "Gene")
+write_xlsx(Markers10, path = "/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/Cluster10.xlsx")
+
+
+Clu <- list("0","1","2","3","4","5","6","7","8","9","10")
+
+for (i in seq_along(Clu)) {
+  tmp <- FindMarkers(CD4, ident.1 = Clu[[i]])
+  tmp <- rownames_to_column(tmp, var = "Gene")
+  filename <- paste0("/home/matthieu/Desktop/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/DATA/degs_rds/de_", Clu[[i]], ".Rda")
+  save(tmp, file = filename)
+}
+```
+
+![UMAP CD4](umap_integrated_clusters_CD4.png)
+<br>
+
+```{r Extended data Fig.3.b}
+CD4=readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD4_SCSE.rds")
+path_figures <- "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/CD4/"
+
+selected_genes <- c("CD3D","CD3E","CD3G","CD4","CD8A","CD8B","TCF7","ICOS","HAVCR2","MKI67","GZMB","GZMK","FOXP3","PPBP","KLRB1","CCR7")
+
+DotPlot(CD4, features = selected_genes, cols = c("aquamarine2", "darkviolet"), 
+                   dot.scale = 8, group.by = "seurat_clusters") +
+  scale_size(range = c(1, 4)) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  theme(legend.position = "none") +
+  coord_flip() +
+  labs(x = NULL, y = NULL, 
+       size = "Fraction of Cells (%)", 
+       color = "Mean Expression") 
+
+```
+
+<br>
+
+```{r Extended data Fig.3.c, fig.width=3, fig.height=6}
+CD4=readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD4_SCSE.rds")
+
+path_figures <- "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/CD4/"
+
+selected_genes <- c("RORA", "RORC", "TBX21", "GATA3", "CXCR3", "CCR6", "CCR4", "IL17A", "IFNA1", "IL4")
+
+
+DotPlot(CD4, features = selected_genes, cols = c("aquamarine2", "darkviolet"), 
+                   dot.scale = 8, group.by = "seurat_clusters") +
+  scale_size(range = c(1, 4)) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  theme(legend.position = "none") +
+  coord_flip() +
+  labs(x = NULL, y = NULL, 
+       size = "Fraction of Cells (%)", 
+       color = "Mean Expression") 
+
+```
+
+
+```{r Extended data Fig.3.d, fig.width = 12, fig.height = 8}
+CD4 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD4_SCSE.rds")
+
+DefaultAssay(CD4) <- 'ADT'
+FeaturePlot(CD4, reduction = "umap.cca", features = c("CD3","CD8","CD62L","CD45RA","HLA-DR","CD4"),cols = c("lightgrey", "#fd3f92"))
+
+```
+
+<br>
+
+
+```{r Extended data Fig.3.e, fig.width = 12, fig.height = 3}
+
+CD4 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD4_SCSE.rds")
+
+CD4$Cluster_Rep <- paste(CD4$Reponse, CD4$Week, sep = "_")
+CD4$Traitement_Week <- paste(CD4$Traitement, CD4$Week, sep = "_")
+
+ppt <- CD4@meta.data %>%
+  as.data.frame() %>%
+  dplyr::group_by(Name, cca_clusters, Cluster_Rep, Traitement) %>%
+  summarise(n = n()) %>%
+  dplyr::group_by(Name, Cluster_Rep,Traitement) %>%
+  summarise(freq = n / sum(n), cca_clusters) %>%
+  as.data.frame()
+
+ppt <- ppt %>%
+  mutate(Type = case_when(
+    cca_clusters == 1 ~ "Cluster1"))
+
+ppt$Traitement_Cluster <- paste0(ppt$Traitement, "_", ppt$cca_clusters)
+
+ppt$Traitement_Cluster <- factor(ppt$Traitement_Cluster, levels = c(
+  "Certolizumab_1", "Infliximab_1", "Ipi-Nivo_1"))
+
+ppt$group <- substr(ppt$Name, 1, 3)
+ppt <- dplyr::mutate(ppt, Patient = as.factor(group))
+
+ppt <- drop_na(ppt)
+
+color_map <- c(
+  "Certolizumab" = "#5f4a95",
+  "Infliximab"  = "#4570b6",
+  "Ipi-Nivo"    = "#46b9ab"
+)
+
+all_plots <- list()
+
+for (cluster in unique(ppt$cca_clusters)) {
+  for (traitement in unique(ppt$Traitement)) {
+    
+    filtered_data <- ppt %>%
+      filter(cca_clusters == cluster & Traitement == traitement)
+    
+    filtered_data <- filtered_data %>%
+      mutate(Cluster_Rep_Simplified = case_when(
+        str_detect(Cluster_Rep, "S1") ~ "S1",
+        str_detect(Cluster_Rep, "S6") ~ "S6",
+        TRUE ~ NA_character_
+      )) %>%
+      filter(!is.na(Cluster_Rep_Simplified))
+    
+    p_value <- if (all(c("S1", "S6") %in% filtered_data$Cluster_Rep_Simplified)) {
+      wilcox.test(
+        filtered_data$freq[filtered_data$Cluster_Rep_Simplified == "S1"],
+        filtered_data$freq[filtered_data$Cluster_Rep_Simplified == "S6"],
+        exact = FALSE
+      )$p.value
+    } else {
+      NA
+    }
+    
+    title <- paste0("Cluster ", cluster, " - ", traitement, ": ", 
+                    ifelse(!is.na(p_value) & p_value < 0.05, "*", "ns"))
+    
+    plot <- ggplot(filtered_data, aes(
+      x = Cluster_Rep_Simplified,
+      y = freq,
+      color = Traitement,     
+      group = Patient         
+    )) +
+      geom_point() +
+      geom_line() +
+      scale_color_manual(values = color_map) +  
+      labs(title = title, x = "Cluster Rep (Simplified)", y = "Frequency") +
+      ylim(0, 0.5) +
+      theme_my() +
+      theme(legend.position = "none")
+    
+    all_plots[[paste0("Cluster_", cluster, "_", traitement)]] <- plot
+  }
+}
+
+combined_plot <- wrap_plots(all_plots, ncol = 4)
+
+print(combined_plot)
+
+
+
+
+
+
+
+```
+
+<br>
+
+```{r eval=FALSE, include=FALSE}
+pbmc=readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD4_SCSE.rds")
+DefaultAssay(pbmc)="RNA"
+path_figures <- "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/FIGURES/Analyses_d_enrichissement_et_autres/ORA (pct.0.2)/"
+
+pbmc$Essai <- ifelse(pbmc@meta.data$Traitement == "Ipi-Nivo", "MELANF", ifelse(pbmc@meta.data$Traitement %in% c("Infliximab", "Certolizumab"), "TICIMEL", NA))
+
+Pathways=c("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/h.all.v7.4.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.reactome.v7.4.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.kegg.v7.4.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c5.go.bp.v7.4.symbols.gmt" )
+
+pbmc$condition=paste0(pbmc$RNA_snn_res.0.2,"_", pbmc$Traitement  ,"_", pbmc$Week)
+Idents(pbmc)=pbmc$condition
+
+condition=list(c("0_Certolizumab_S6","0_Infliximab_S6"),
+               c("0_Certolizumab_S6","0_Ipi-Nivo_S6"),
+               c("0_Infliximab_S6","0_Ipi-Nivo_S6"),
+               c("1_Certolizumab_S6","1_Infliximab_S6"),
+               c("1_Certolizumab_S6","1_Ipi-Nivo_S6"),
+               c("1_Infliximab_S6","1_Ipi-Nivo_S6"),
+               c("2_Certolizumab_S6","2_Infliximab_S6"),
+               c("2_Certolizumab_S6","2_Ipi-Nivo_S6"),
+               c("2_Infliximab_S6","2_Ipi-Nivo_S6"),
+               c("3_Certolizumab_S6","3_Infliximab_S6"),
+               c("3_Certolizumab_S6","3_Ipi-Nivo_S6"),
+               c("3_Infliximab_S6","3_Ipi-Nivo_S6"),
+               c("4_Certolizumab_S6","4_Infliximab_S6"),
+               c("4_Certolizumab_S6","4_Ipi-Nivo_S6"),
+               c("4_Infliximab_S6","4_Ipi-Nivo_S6"),
+               c("5_Certolizumab_S6","5_Infliximab_S6"),
+               c("5_Certolizumab_S6","5_Ipi-Nivo_S6"),
+               c("5_Infliximab_S6","5_Ipi-Nivo_S6"),
+               c("6_Certolizumab_S6","6_Infliximab_S6"),
+               c("6_Certolizumab_S6","6_Ipi-Nivo_S6"),
+               c("6_Infliximab_S6","6_Ipi-Nivo_S6"),
+               c("7_Certolizumab_S6","7_Infliximab_S6"),
+               c("7_Certolizumab_S6","7_Ipi-Nivo_S6"),
+               c("7_Infliximab_S6","7_Ipi-Nivo_S6"),
+               c("8_Certolizumab_S6","8_Infliximab_S6"),
+               c("8_Certolizumab_S6","8_Ipi-Nivo_S6"),
+               c("8_Infliximab_S6","8_Ipi-Nivo_S6"),
+               c("9_Certolizumab_S6","9_Infliximab_S6"),
+               c("9_Certolizumab_S6","9_Ipi-Nivo_S6"),
+               c("9_Infliximab_S6","9_Ipi-Nivo_S6"),
+               c("10_Certolizumab_S6","10_Infliximab_S6"),
+               c("10_Certolizumab_S6","10_Ipi-Nivo_S6"),
+               c("10_Infliximab_S6","10_Ipi-Nivo_S6"),
+               c("0_Certolizumab_S6","0_Certolizumab_S1"),
+               c("0_Infliximab_S6","0_Infliximab_S1"),
+               c("0_Ipi-Nivo_S6","0_Ipi-Nivo_S1"),
+               c("1_Certolizumab_S6","1_Certolizumab_S1"),
+               c("1_Infliximab_S6","1_Infliximab_S1"),
+               c("1_Ipi-Nivo_S6","1_Ipi-Nivo_S1"),
+               c("2_Certolizumab_S6","2_Certolizumab_S1"),
+               c("2_Infliximab_S6","2_Infliximab_S1"),
+               c("2_Ipi-Nivo_S6","2_Ipi-Nivo_S1"),
+               c("3_Certolizumab_S6","3_Certolizumab_S1"),
+               c("3_Infliximab_S6","3_Infliximab_S1"),
+               c("3_Ipi-Nivo_S6","3_Ipi-Nivo_S1"),
+               c("4_Certolizumab_S6","4_Certolizumab_S1"),
+               c("4_Infliximab_S6","4_Infliximab_S1"),
+               c("4_Ipi-Nivo_S6","4_Ipi-Nivo_S1"),
+               c("5_Certolizumab_S6","5_Certolizumab_S1"),
+               c("5_Infliximab_S6","5_Infliximab_S1"),
+               c("5_Ipi-Nivo_S6","5_Ipi-Nivo_S1"),
+               c("6_Certolizumab_S6","6_Certolizumab_S1"),
+               c("6_Infliximab_S6","6_Infliximab_S1"),
+               c("6_Ipi-Nivo_S6","6_Ipi-Nivo_S1"),
+               c("7_Certolizumab_S6","7_Certolizumab_S1"),
+               c("7_Infliximab_S6","7_Infliximab_S1"),
+               c("7_Ipi-Nivo_S6","7_Ipi-Nivo_S1"),
+               c("8_Certolizumab_S6","8_Certolizumab_S1"),
+               c("8_Infliximab_S6","8_Infliximab_S1"),
+               c("8_Ipi-Nivo_S6","8_Ipi-Nivo_S1"),
+               c("9_Certolizumab_S6","9_Certolizumab_S1"),
+               c("9_Infliximab_S6","9_Infliximab_S1"),
+               c("9_Ipi-Nivo_S6","9_Ipi-Nivo_S1"),
+               c("10_Certolizumab_S6","10_Certolizumab_S1"),
+               c("10_Infliximab_S6","10_Infliximab_S1"),
+               c("10_Ipi-Nivo_S6","10_Ipi-Nivo_S1"))
+
+for(condi in condition){
+  Idents(pbmc)=pbmc$condition
+
+marks=FindMarkers(pbmc,ident.1 =condi[[1]],ident.2 = condi[2:length(condi)] ) %>% rownames_to_column("Gene") %>% 
+  dplyr::filter(p_val_adj<0.01,(pct.1>0.2|pct.2>0.2),abs(avg_log2FC)>0.5) %>% 
+  dplyr::mutate(diff=pct.1-pct.2)
+  
+bgset=rownames(pbmc)[rowSums(pbmc[["RNA"]]$counts)>0]
+
+pp=lapply(Pathways, function(x){
+  
+  pathways.hallmark <- fgsea::gmtPathways(x)
+
+  
+  orr=fgsea::fora(pathways = pathways.hallmark,genes=marks$Gene,universe = bgset) %>% dplyr::filter(padj<0.01) %>% 
+    dplyr::select(-overlapGenes)
+  
+
+  return(orr)
+
+})
+
+pp <- lapply(Pathways, function(x) {
+  pathways <- fgsea::gmtPathways(x)
+  fgsea::fora(pathways = pathways,
+              genes    = marks$Gene,
+              universe = bgset) %>%
+    filter(padj < 0.01)
+})
+
+dat <- bind_rows(pp) %>%
+  arrange(padj)
+
+plt <- dat %>%
+  as_tibble() %>%
+  
+  mutate(
+    geneList = overlapGenes %>%
+      str_remove_all("^c\\(") %>%      
+      str_remove_all("\\)$") %>%       
+      str_remove_all('\\"') %>%        
+      str_split(",\\s*")               
+  ) %>%
+
+  mutate(
+    overlapPos = map(geneList, ~ keep(.x,  ~ {
+      idx <- match(.x, marks$Gene)
+      !is.na(idx) && marks$avg_log2FC[idx] > 0
+    })),
+    overlapNeg = map(geneList, ~ keep(.x,  ~ {
+      idx <- match(.x, marks$Gene)
+      !is.na(idx) && marks$avg_log2FC[idx] < 0
+    }))
+  ) %>%
+  
+  mutate(
+    overlapGenes = map_chr(geneList, paste, collapse = ";"),
+    overlapPos   = map_chr(overlapPos,   paste, collapse = ";"),
+    overlapNeg   = map_chr(overlapNeg,   paste, collapse = ";")
+  ) %>%
+  
+  arrange(padj) %>%
+  mutate(
+    pathway   = factor(pathway, levels = rev(pathway)),
+    rank      = row_number(),
+    GeneRatio = overlap / size
+  )
+
+plt_to_export <- plt %>% 
+  dplyr::select(-geneList)
+
+stopifnot(all(!map_lgl(plt_to_export, is.list)))
+
+write.table(plt_to_export,file      = paste0(path_figures, "/ORA_RESULTS_", condi[[1]], "_vs_", condi[[2]], ".txt"),  quote     = FALSE,  sep       = "\t",  row.names = FALSE)
+  
+}
+```
+
+```{r Extended data Fig.3.f}
+detach("package:purrr", unload = TRUE)
+library(purrr)
+
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD8_SCSE.rds")
+path_figures <- "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/CD4/"
+dat1_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/FIGURES/Analyses_d_enrichissement_et_autres/ORA (pct.0.2)/ORA_RESULTS_1_Certolizumab_S6_vs_1_Certolizumab_S1.txt",sep ="")
+dat2_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/FIGURES/Analyses_d_enrichissement_et_autres/ORA (pct.0.2)/ORA_RESULTS_1_Infliximab_S6_vs_1_Infliximab_S1.txt",sep ="")
+dat3_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/FIGURES/Analyses_d_enrichissement_et_autres/ORA (pct.0.2)/ORA_RESULTS_1_Ipi-Nivo_S6_vs_1_Ipi-Nivo_S1.txt",sep ="")
+dat1_raw$Traitement <- "Certolizumab"
+dat2_raw$Traitement <- "Infliximab"
+dat3_raw$Traitement <- "IpiNivo"
+
+dat1_raw <- dat1_raw %>% mutate(pval = as.numeric(pval))
+dat2_raw <- dat2_raw %>% mutate(pval = as.numeric(pval))
+dat3_raw <- dat3_raw %>% mutate(pval = as.numeric(pval))
+
+is_numeric_string <- function(x) {
+  !is.na(suppressWarnings(as.numeric(x)))
+}
+
+
+list_dat_raw <- list(dat1_raw, dat2_raw, dat3_raw)
+
+list_dat_processed <- map(list_dat_raw, ~ {
+  .x %>%
+    rowwise() %>%
+    mutate(
+      is_num = is_numeric_string(as.character(overlapNeg)),
+      temp_rank = if (is_num) as.numeric(overlapNeg) else rank,
+      temp_gene_ratio = if (is_num) rank else GeneRatio,
+      overlapNeg = if (is_num) "" else overlapNeg,
+      rank = temp_rank,
+      GeneRatio = temp_gene_ratio
+    ) %>%
+    ungroup() %>%
+    dplyr::select(-is_num, -temp_rank, -temp_gene_ratio)
+})
+
+dat1_processed <- list_dat_processed[[1]]
+dat2_processed <- list_dat_processed[[2]]
+dat3_processed <- list_dat_processed[[3]]
+
+Pathways_gmt_files <- c(
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/h.all.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.reactome.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.kegg_medicus.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c5.go.bp.v2024.1.Hs.symbols.gmt"
+)
+
+all_pathways_genes <- list()
+for (gmt_file in Pathways_gmt_files) {
+  pathways_from_file <- gmtPathways(gmt_file)
+  all_pathways_genes <- c(all_pathways_genes, pathways_from_file)
+}
+
+pathway_theoretical_sizes <- data.frame(
+  pathway = names(all_pathways_genes),
+  k = unlist(lapply(all_pathways_genes, length))
+)
+
+dat1_top10 <- dat1_processed %>% arrange(padj) %>% head(10)
+dat2_top10 <- dat2_processed %>% arrange(padj) %>% head(10)
+dat3_top10 <- dat3_processed %>% arrange(padj) %>% head(10)
+
+all_top_pathways_unique <- bind_rows(
+  dat1_top10 %>% dplyr::select(pathway),
+  dat2_top10 %>% dplyr::select(pathway),
+  dat3_top10 %>% dplyr::select(pathway)
+) %>% distinct(pathway) 
+
+all_treatments_df <- tibble(Traitement = c("Certolizumab", "Infliximab", "IpiNivo"))
+
+full_combinations_for_radar <- expand_grid(pathway = all_top_pathways_unique$pathway,
+                                           Traitement = all_treatments_df$Traitement)
+
+all_results_processed <- bind_rows(dat1_processed, dat2_processed, dat3_processed)
+
+dat <- full_combinations_for_radar %>%
+  left_join(all_results_processed, by = c("pathway", "Traitement"))
+
+dat$Classe <- c("IFN","IFN","IFN","IFN","IFN","IFN","IFN","IFN","IFN","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","CYTOKINE","CYTOKINE","CYTOKINE","IFN","IFN","IFN","CYTOKINE","CYTOKINE","CYTOKINE","IFN","IFN","IFN","IFN","IFN","IFN","Other","Other","Other","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","Other","Other","Other","Other","Other","Other","Other","Other","Other")
+
+
+dat <- na.omit(dat)
+
+gene_sums <- rowSums(CD8@assays$RNA$counts)
+genes_to_keep <- names(gene_sums[gene_sums > 0])
+CD8@assays$RNA$counts <- CD8@assays$RNA$counts[genes_to_keep, ]
+universe_genes <- rownames(CD8@assays$RNA$counts)
+N <- length(universe_genes)
+
+dat <- dat %>%
+  left_join(pathway_theoretical_sizes, by = "pathway") %>%
+  mutate(N = N) 
+
+dat <- dat %>%
+  mutate(
+    x = as.numeric(overlap), 
+    M = as.numeric(size)     
+  ) %>%
+  mutate(FE = (x / k) / (M / N))
+
+
+dat_radar <- dat %>%
+  dplyr::select(pathway, Traitement, Classe, FE)
+
+pathways_with_classes <- dat_radar %>%
+  distinct(pathway, Classe) %>%
+  arrange(Classe, pathway)
+
+ordered_pathways <- pathways_with_classes$pathway
+
+df_radar_wide <- dat_radar %>%
+  dplyr::select(pathway, Traitement, FE) %>%
+  pivot_wider(names_from = pathway, values_from = FE) %>%
+  rename(group = Traitement)
+
+df_radar_wide <- df_radar_wide %>%
+  mutate(across(-group, ~ replace_na(.x, 0)))
+
+cols_to_transform_and_normalize <- names(df_radar_wide)[names(df_radar_wide) != "group"]
+
+df_radar_transformed_normalized <- df_radar_wide %>%
+  mutate(across(all_of(cols_to_transform_and_normalize), ~ {
+    transformed_values <- log2(. + 1) 
+    
+    min_val_transformed <- 0
+    max_val_transformed <- max(transformed_values, na.rm = TRUE)
+    
+    if (min_val_transformed == max_val_transformed) {
+      return(0.5)
+    } else {
+      return((transformed_values - min_val_transformed) / (max_val_transformed - min_val_transformed))
+    }
+  }))
+
+df_radar_final <- df_radar_transformed_normalized %>%
+  dplyr::select(group, all_of(ordered_pathways))
+
+couleurs_traitements <- c(
+  "Infliximab" = "#4570b6",
+  "Certolizumab" = "#5f4a95",
+  "IpiNivo" = "#46b9ab"
+)
+
+df_long <- df_radar_final %>%
+  rename(Traitement = group) %>%
+  pivot_longer(
+    cols = -Traitement,
+    names_to = "Pathway",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Pathway = str_replace_all(Pathway, "_", " "),
+    Pathway = str_wrap(Pathway, width = 30) 
+  ) %>%
+  mutate(Traitement = factor(Traitement, levels = names(couleurs_traitements))) %>%
+  mutate(Pathway = factor(Pathway, levels = rev(unique(Pathway))))
+
+
+plot_radar_values <- ggplot(df_long, aes(x = Value, y = Pathway, fill = Traitement)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.5) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.2),
+    expand = c(0.01, 0.01)
+  ) +
+  scale_fill_manual(values = couleurs_traitements) +
+  labs(
+    title = "Valeurs des Pathways par Traitement",
+    x = "Fold Enrichment",
+    y = "Pathways"
+  ) +
+  theme_my() + 
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    legend.position = "bottom",
+    plot.title = element_text(hjust = 0.5)
+  )
+
+ggsave("radar_pathway_values_barplot_Cluster1.svg", path = path_figures, plot = plot_radar_values, width = 6, height = 12, dpi = 500)
+```
+
+<br>
+
+```{r eval=FALSE, include=FALSE}
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD4_SCSE.rds")
+
+path_figures <- "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/CD4/"
+
+dat1_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/FIGURES/Analyses_d_enrichissement_et_autres/ORA (pct.0.2)/ORA_RESULTS_1_Certolizumab_S6_vs_1_Certolizumab_S1.txt",sep ="")
+dat2_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/FIGURES/Analyses_d_enrichissement_et_autres/ORA (pct.0.2)/ORA_RESULTS_1_Infliximab_S6_vs_1_Infliximab_S1.txt",sep ="")
+dat3_raw <- read.csv("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/POST-SCSE/CD4/FIGURES/Analyses_d_enrichissement_et_autres/ORA (pct.0.2)/ORA_RESULTS_1_Ipi-Nivo_S6_vs_1_Ipi-Nivo_S1.txt",sep ="")
+
+dat1_raw$Traitement <- "Certolizumab"
+dat2_raw$Traitement <- "Infliximab"
+dat3_raw$Traitement <- "IpiNivo"
+
+dat1_raw <- dat1_raw %>% mutate(pval = as.numeric(pval))
+dat2_raw <- dat2_raw %>% mutate(pval = as.numeric(pval))
+dat3_raw <- dat3_raw %>% mutate(pval = as.numeric(pval))
+
+is_numeric_string <- function(x) {
+  !is.na(suppressWarnings(as.numeric(x)))
+}
+
+
+list_dat_raw <- list(dat1_raw, dat2_raw, dat3_raw)
+
+list_dat_processed <- map(list_dat_raw, ~ {
+  .x %>%
+    rowwise() %>%
+    mutate(
+      is_num = is_numeric_string(as.character(overlapNeg)),
+      temp_rank = if (is_num) as.numeric(overlapNeg) else rank,
+      temp_gene_ratio = if (is_num) rank else GeneRatio,
+      overlapNeg = if (is_num) "" else overlapNeg,
+      rank = temp_rank,
+      GeneRatio = temp_gene_ratio
+    ) %>%
+    ungroup() %>%
+    dplyr::select(-is_num, -temp_rank, -temp_gene_ratio)
+})
+
+dat1_processed <- list_dat_processed[[1]]
+dat2_processed <- list_dat_processed[[2]]
+dat3_processed <- list_dat_processed[[3]]
+
+Pathways_gmt_files <- c(
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/h.all.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.reactome.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.kegg_medicus.v2024.1.Hs.symbols.gmt",
+  "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c5.go.bp.v2024.1.Hs.symbols.gmt"
+)
+
+all_pathways_genes <- list()
+for (gmt_file in Pathways_gmt_files) {
+  pathways_from_file <- gmtPathways(gmt_file)
+  all_pathways_genes <- c(all_pathways_genes, pathways_from_file)
+}
+
+pathway_theoretical_sizes <- data.frame(
+  pathway = names(all_pathways_genes),
+  k = unlist(lapply(all_pathways_genes, length))
+)
+
+dat1_top10 <- dat1_processed %>% arrange(padj) %>% head(10)
+dat2_top10 <- dat2_processed %>% arrange(padj) %>% head(10)
+dat3_top10 <- dat3_processed %>% arrange(padj) %>% head(10)
+
+all_top_pathways_unique <- bind_rows(
+  dat1_top10 %>% dplyr::select(pathway),
+  dat2_top10 %>% dplyr::select(pathway),
+  dat3_top10 %>% dplyr::select(pathway)
+) %>% distinct(pathway) 
+
+all_treatments_df <- tibble(Traitement = c("Certolizumab", "Infliximab", "IpiNivo"))
+
+full_combinations_for_radar <- expand_grid(pathway = all_top_pathways_unique$pathway,
+                                           Traitement = all_treatments_df$Traitement)
+
+all_results_processed <- bind_rows(dat1_processed, dat2_processed, dat3_processed)
+
+dat <- full_combinations_for_radar %>%
+  left_join(all_results_processed, by = c("pathway", "Traitement"))
+
+dat$Classe <- c("IFN","IFN","IFN","IFN","IFN","IFN","IFN","IFN","IFN","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","ImmuneDef","CYTOKINE","CYTOKINE","CYTOKINE","IFN","IFN","IFN","CYTOKINE","CYTOKINE","CYTOKINE","IFN","IFN","IFN","IFN","IFN","IFN","Other","Other","Other","Other","Other","Other","ImmuneDef","ImmuneDef","ImmuneDef","Other","Other","Other","Other","Other","Other","Other","Other","Other")
+
+dat <- na.omit(dat)
+
+unique_classes <- unique(dat$Classe)
+
+for (current_class in unique_classes) {
+  message(paste0("Traitement de la classe : ", current_class))
+
+  all_top_pathways_for_class <- dat %>%
+    filter(Classe == current_class)
+
+  all_genes_for_class <- all_top_pathways_for_class %>%
+    pull(overlapGenes) %>%
+    str_split(";") %>%
+    unlist() %>%
+    unique() %>%
+    as.character()
+
+  genes_to_analyze_current_class <- all_genes_for_class[all_genes_for_class %in% rownames(CD8@assays$RNA$data)]
+
+  if (length(genes_to_analyze_current_class) == 0) {
+    warning(paste0("Aucun gène de la classe '", current_class, "' n'a été trouvé dans l'objet Seurat. Skipping cette classe."))
+    next 
+  }
+
+  logFC_patient_gene_data <- tibble()
+  patients_unique <- unique(CD8@meta.data$orig.ident) 
+
+  for (patient_id in patients_unique) {
+    cells_s1 <- CD8@meta.data %>% filter(orig.ident == patient_id, Week == "S1") 
+    cells_s6 <- CD8@meta.data %>% filter(orig.ident == patient_id, Week == "S6") 
+
+    if (length(cells_s1) > 0 && length(cells_s6) > 0) {
+      expr_s1 <- Seurat::GetAssayData(CD8, slot = "data")[genes_to_analyze_current_class, cells_s1, drop = FALSE]
+      expr_s6 <- Seurat::GetAssayData(CD8, slot = "data")[genes_to_analyze_current_class, cells_s6, drop = FALSE]
+
+      if(nrow(expr_s1) == 0 || nrow(expr_s6) == 0) {
+          warning(paste0("Pas de données d'expression pour les gènes de la classe '", current_class, "' pour le patient ", patient_id, ". Skipping patient."))
+          next
+      }
+
+      mean_expr_s1 <- rowMeans(expr_s1)
+      mean_expr_s6 <- rowMeans(expr_s6)
+
+      logFC_val <- mean_expr_s6 / mean_expr_s1 
+
+      patient_treatment <- CD8@meta.data %>%
+        filter(orig.ident == patient_id) %>%
+        dplyr::pull(Traitement) %>%
+        unique()
+
+      if (length(patient_treatment) == 1) {
+        temp_df <- tibble(
+          Gene = genes_to_analyze_current_class,
+          Patient = patient_id,
+          Traitement = patient_treatment,
+          LogFC_S6_S1 = logFC_val
+        )
+        logFC_patient_gene_data <- bind_rows(logFC_patient_gene_data, temp_df)
+      } else {
+        warning(paste("Problème avec le traitement du patient:", patient_id, ". Plusieurs ou aucun traitement trouvé."))
+      }
+    } else {
+      warning(paste("Données S1 ou S6 manquantes ou insuffisantes pour le patient:", patient_id, ". Patient ignoré pour l'analyse des logFC."))
+    }
+  }
+
+  if (nrow(logFC_patient_gene_data) == 0) {
+    warning(paste0("Aucune donnée de logFC n'a pu être calculée pour la classe '", current_class, "'. Skipping cette classe."))
+    next
+  }
+
+  mean_logFC_by_treatment <- logFC_patient_gene_data %>%
+    group_by(Gene, Traitement) %>%
+    summarise(Mean_LogFC = mean(LogFC_S6_S1, na.rm = TRUE), .groups = 'drop') %>%
+    pivot_wider(names_from = Traitement, values_from = Mean_LogFC,
+                names_prefix = "Mean_LogFC_") 
+
+  logFC_by_patient <- logFC_patient_gene_data %>%
+    dplyr::select(Gene, Patient, LogFC_S6_S1) %>%
+    pivot_wider(names_from = Patient, values_from = LogFC_S6_S1,
+                names_prefix = "LogFC_Patient_")    
+
+  treatments <- unique(logFC_patient_gene_data$Traitement)
+  comparison_pairs <- combn(treatments, 2, simplify = FALSE)
+
+  p_value_results <- tibble(Gene = genes_to_analyze_current_class)
+
+  for (gene in genes_to_analyze_current_class) {
+    gene_data <- logFC_patient_gene_data %>% filter(Gene == gene)
+
+    for (pair in comparison_pairs) {
+      trt1 <- pair[1]
+      trt2 <- pair[2]
+
+      data_trt1 <- gene_data %>% filter(Traitement == trt1) %>% pull(LogFC_S6_S1)
+      data_trt2 <- gene_data %>% filter(Traitement == trt2) %>% pull(LogFC_S6_S1)
+
+      if (length(data_trt1[!is.na(data_trt1)]) > 1 && length(data_trt2[!is.na(data_trt2)]) > 1) {
+        test_result <- wilcox.test(data_trt1, data_trt2)
+        col_name <- paste0("P_Value_Wilcoxon_", trt1, "_vs_", trt2)
+        p_value_results[p_value_results$Gene == gene, col_name] <- test_result$p.value
+      } else {
+        col_name <- paste0("P_Value_Wilcoxon_", trt1, "_vs_", trt2)
+        p_value_results[p_value_results$Gene == gene, col_name] <- NA
+      }
+    }
+  }
+
+  final_table <- mean_logFC_by_treatment %>%
+    left_join(logFC_by_patient, by = "Gene") %>%
+    left_join(p_value_results, by = "Gene") %>%
+    dplyr::select(Gene, starts_with("Mean_LogFC_"), starts_with("P_Value_Wilcoxon_"), starts_with("LogFC_Patient_"))
+
+  output_filename <- paste0("Resume_Genes_", current_class, "_Comparaisons_Traitements_C1.xlsx")
+  write.xlsx(final_table, file.path(path_figures, output_filename), rowNames = FALSE)
+
+  message(paste("Le tableau pour la classe '", current_class, "' a été exporté avec succès vers:", file.path(path_figures, output_filename)))
+}
+
+```
+
+```{r Extended data Fig.3.g, eval=FALSE, include=FALSE}
+datIFN <- read.xlsx("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/CD4/Tableaux_Cluster1/Resume_Genes_IFN_Comparaisons_Traitements.xlsx", sheetIndex = 1)
+datCYT <- read.xlsx("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/CD4/Tableaux_Cluster1/Resume_Genes_CYTOKINE_Comparaisons_Traitements.xlsx", sheetIndex = 1)
+datIMM <- read.xlsx("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/CD4/Tableaux_Cluster1/Resume_Genes_ImmuneDef_Comparaisons_Traitements.xlsx", sheetIndex = 1)
+datOTH <- read.xlsx("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/CD4/Tableaux_Cluster1/Resume_Genes_Other_Comparaisons_Traitements.xlsx", sheetIndex = 1)
+
+
+genesIFN1 <- datIFN %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Infliximab < 0.05) %>%
+  pull(Gene)
+genesIFN2 <- datIFN %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesIFN3 <- datIFN %>%
+  filter(P_Value_Wilcoxon_Infliximab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesCYT1 <- datCYT %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Infliximab < 0.05) %>%
+  pull(Gene)
+genesCYT2 <- datCYT %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesCYT3 <- datCYT %>%
+  filter(P_Value_Wilcoxon_Infliximab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesIMM1 <- datIMM %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Infliximab < 0.05) %>%
+  pull(Gene)
+genesIMM2 <- datIMM %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesIMM3 <- datIMM %>%
+  filter(P_Value_Wilcoxon_Infliximab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesOTH1 <- datOTH %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Infliximab < 0.05) %>%
+  pull(Gene)
+genesOTH2 <- datOTH %>%
+  filter(P_Value_Wilcoxon_Certolizumab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+genesOTH3 <- datOTH %>%
+  filter(P_Value_Wilcoxon_Infliximab_vs_Ipi.Nivo < 0.05) %>%
+  pull(Gene)
+
+all_genes <- union(genesIFN1, genesIFN2)
+all_genes <- union(all_genes, genesIFN3)
+all_genes <- union(all_genes, genesCYT1)
+all_genes <- union(all_genes, genesCYT2)
+all_genes <- union(all_genes, genesCYT3)
+all_genes <- union(all_genes, genesIMM1)
+all_genes <- union(all_genes, genesIMM2)
+all_genes <- union(all_genes, genesIMM3)
+all_genes <- union(all_genes, genesOTH1)
+all_genes <- union(all_genes, genesOTH2)
+all_genes <- union(all_genes, genesOTH3)
+
+
+CD8_expr <- as.data.frame(Seurat::GetAssayData(CD8, slot = "data"))
+CD8_meta <- CD8@meta.data 
+
+patients <- unique(CD8_meta$orig.ident)
+
+genes_for_heatmap <- all_genes[all_genes %in% rownames(CD8_expr)]
+
+heatmap_matrix <- matrix(NA, nrow = length(genes_for_heatmap), ncol = length(patients),
+                         dimnames = list(genes_for_heatmap, patients))
+
+for (patient_id in patients) {
+  patient_cells_meta <- CD8_meta %>%
+    filter(orig.ident == patient_id)
+
+  s1_cells <- patient_cells_meta %>% filter(Week == "S1")
+  s6_cells <- patient_cells_meta %>% filter(Week == "S6") 
+
+  if (length(s1_cells) > 0 && length(s6_cells) > 0) {
+    mean_expr_s1 <- rowMeans(CD8_expr[genes_for_heatmap, s1_cells, drop = FALSE])
+    mean_expr_s6 <- rowMeans(CD8_expr[genes_for_heatmap, s6_cells, drop = FALSE])
+
+    ratio_s6_s1_values <- mean_expr_s6 - mean_expr_s1
+    heatmap_matrix[, patient_id] <- ratio_s6_s1_values
+  } else {
+    warning(paste("Données S1 ou S6 manquantes ou insuffisantes pour le patient:", patient_id, ". Ce patient sera omis ou aura des NAs."))
+  }
+}
+
+heatmap_matrix[is.infinite(heatmap_matrix)] <- NA
+heatmap_matrix[is.na(heatmap_matrix)] <- 0
+
+heatmap_matrix_clean <- heatmap_matrix[, colSums(is.na(heatmap_matrix)) < nrow(heatmap_matrix), drop = FALSE]
+heatmap_matrix_clean <- heatmap_matrix_clean[rowSums(is.na(heatmap_matrix_clean)) < ncol(heatmap_matrix_clean), , drop = FALSE]
+
+if (ncol(heatmap_matrix_clean) == 0 || nrow(heatmap_matrix_clean) == 0) {
+  stop("La matrice de la heatmap est vide après le filtrage des patients et des gènes. Vérifiez vos données.")
+}
+
+patient_treatment_map <- CD8@meta.data %>%
+  tibble::rownames_to_column("barcode_column") %>%
+  dplyr::select(orig.ident, Traitement, Reponse) %>%
+  distinct() %>%
+  tibble::column_to_rownames("orig.ident")
+
+annotation_patient_df_clean <- patient_treatment_map[colnames(heatmap_matrix_clean), , drop = FALSE]
+
+desired_treatment_order <- c("Ipi-Nivo", "Certolizumab", "Infliximab")
+annotation_patient_df_clean$Traitement <- factor(annotation_patient_df_clean$Traitement, levels = desired_treatment_order)
+
+desired_response_order <- c("R", "NR")
+annotation_patient_df_clean$Reponse <- factor(annotation_patient_df_clean$Reponse, levels = desired_response_order)
+
+ordered_patient_ids_final <- c()
+
+for (treatment in desired_treatment_order) {
+  patients_in_treatment <- rownames(annotation_patient_df_clean[annotation_patient_df_clean$Traitement == treatment, , drop = FALSE])
+
+  if (length(patients_in_treatment) > 1) {
+    sub_matrix <- heatmap_matrix_clean[, patients_in_treatment, drop = FALSE]
+
+    if (nrow(sub_matrix) > 0 && ncol(sub_matrix) > 0 && var(as.vector(sub_matrix), na.rm = TRUE) > 1e-9) {
+      dist_patients <- dist(t(sub_matrix))
+      hc_patients <- hclust(dist_patients)
+      ordered_patient_ids_final <- c(ordered_patient_ids_final, hc_patients$labels[hc_patients$order])
+    } else {
+        ordered_patient_ids_final <- c(ordered_patient_ids_final, patients_in_treatment[order(patients_in_treatment)])
+    }
+  } else if (length(patients_in_treatment) == 1) {
+    ordered_patient_ids_final <- c(ordered_patient_ids_final, patients_in_treatment)
+  }
+}
+
+heatmap_matrix_ordered <- heatmap_matrix_clean[, ordered_patient_ids_final, drop = FALSE]
+
+annotation_patient_df_ordered <- annotation_patient_df_clean[ordered_patient_ids_final, , drop = FALSE]
+
+all_p_values_df <- bind_rows(
+  datIFN %>% dplyr::select(Gene, starts_with("P_Value_Wilcoxon_")),
+  datCYT %>% dplyr::select(Gene, starts_with("P_Value_Wilcoxon_")),
+  datIMM %>% dplyr::select(Gene, starts_with("P_Value_Wilcoxon_")),
+  datOTH %>% dplyr::select(Gene, starts_with("P_Value_Wilcoxon_"))
+) %>%
+  distinct(Gene, .keep_all = TRUE) 
+
+genes_in_heatmap <- rownames(heatmap_matrix_ordered)
+annotation_gene_df <- data.frame(row.names = genes_in_heatmap)
+
+create_significance_column <- function(data_p_values, p_value_col_name, genes_to_annotate, threshold = 0.05) {
+  sig_vector <- rep(FALSE, length(genes_to_annotate))
+  names(sig_vector) <- genes_to_annotate
+
+  significant_genes_from_source <- data_p_values %>%
+    filter(get(p_value_col_name) < threshold) %>%
+    pull(Gene)
+
+  sig_vector[genes_to_annotate %in% significant_genes_from_source] <- TRUE
+
+  return(sig_vector)
+}
+
+annotation_gene_df$`Sig. Certo vs Inflix` <- create_significance_column(
+  all_p_values_df, "P_Value_Wilcoxon_Certolizumab_vs_Infliximab", genes_in_heatmap
+)
+
+annotation_gene_df$`Sig. Certo vs Ipi-Nivo` <- create_significance_column(
+  all_p_values_df, "P_Value_Wilcoxon_Certolizumab_vs_Ipi.Nivo", genes_in_heatmap
+)
+
+annotation_gene_df$`Sig. Inflix vs Ipi-Nivo` <- create_significance_column(
+  all_p_values_df, "P_Value_Wilcoxon_Infliximab_vs_Ipi.Nivo", genes_in_heatmap
+)
+
+for (col_name in colnames(annotation_gene_df)) {
+  if (is.logical(annotation_gene_df[[col_name]])) {
+    annotation_gene_df[[col_name]] <- factor(
+      ifelse(annotation_gene_df[[col_name]], "Oui", "Non"), 
+      levels = c("Non", "Oui") 
+    )
+  }
+}
+
+annotation_gene_df <- annotation_gene_df[rownames(heatmap_matrix_ordered), , drop = FALSE]
+
+annotation_colors_rows <- list(
+  `Sig. Certo vs Inflix` = c("Non" = "white", "Oui" = "yellow"), # "Non" doit être le premier niveau
+  `Sig. Certo vs Ipi-Nivo` = c("Non" = "white", "Oui" = "yellow"),
+  `Sig. Inflix vs Ipi-Nivo` = c("Non" = "white", "Oui" = "yellow")
+)
+
+annotation_colors <- list(
+  Traitement = c("Certolizumab" = "#5f4a95", "Infliximab" = "#4570b6", "Ipi-Nivo" = "#46b9ab"),
+  Reponse = c("R" = "darkgreen", "NR" = "darkred")
+)
+
+annotation_colors_all <- c(annotation_colors, annotation_colors_rows)
+
+colors <- rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu"))
+colors.use <- colorRampPalette(colors)(100)
+
+scaled_heatmap_matrix <- t(scale(t(heatmap_matrix_ordered)))
+
+my_breaks <- c(
+  seq(min(scaled_heatmap_matrix, na.rm = TRUE)+2, 0, length.out = 51),
+  seq(0.001, max(scaled_heatmap_matrix, na.rm = TRUE)-2, length.out = 50)
+)
+
+P_heatmap_obj <- pheatmap(
+  scaled_heatmap_matrix,
+  color = colors.use,
+  breaks = my_breaks,
+  cluster_rows = TRUE, 
+  cluster_cols = FALSE,
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  annotation_col = annotation_patient_df_ordered,
+  annotation_row = annotation_gene_df, 
+  annotation_colors = annotation_colors_all, 
+  main = "Expression des Gènes (Z-score logFC S6 vs S1) par Patient et Significativité",
+  fontsize_row = 8,
+  fontsize_col = 8,
+  gaps_col = cumsum(table(annotation_patient_df_ordered$Traitement))[1:(length(desired_treatment_order)-1)]
+)
+ggsave(filename = file.path(path_figures, "Heatmap_Genes_PathwaysBarplot_Cluster1.svg"),plot = P_heatmap_obj, width = 10, height = 10)
+
+dim(scaled_heatmap_matrix)
+
+```
+
+![HM CD4](HM_CD4_C1.svg)
+
+<br>
+
+```{r Extended data Fig.3.h}
+CD8 <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/CD4_SCSE.rds")
+
+CD8 <- subset(CD8, RNA_snn_res.0.2 =="1")
+
+net <- get_collectri(organism = 'human', split_complexes = FALSE)
+
+meta <- CD8@meta.data %>%
+  rownames_to_column(var = "cell") %>%
+  dplyr::select(cell, seurat_clusters = RNA_snn_res.0.2, Traitement, Week, orig.ident, Reponse)
+
+groups <- meta %>%
+  mutate(grp = paste0("C", seurat_clusters, "_",orig.ident, "_", Traitement, "_", Reponse, "_" , Week)) %>%
+  pull(grp) %>%
+  unique()
+
+results_pb <- vector("list", length(groups))
+names(results_pb) <- groups
+
+for (grp in groups) {
+  
+  cells_grp <- meta %>% filter(paste0("C", seurat_clusters, "_",orig.ident, "_", Traitement, "_", Reponse, "_" , Week) == grp) %>% pull(cell)
+  sub       <- subset(CD8, cells = cells_grp)
+ 
+  mat_norm  <- GetAssayData(sub, assay = "RNA", slot = "data")
+  pb_vec    <- Matrix::rowSums(mat_norm)  
+  pb_mat    <- matrix(pb_vec, ncol = 1, dimnames = list(names(pb_vec), grp))
+  
+  acts_pb   <- run_wmean(
+    mat     = as.matrix(pb_mat),
+    net     = net,
+    .source = "source",
+    .target = "target",
+    .mor    = "mor",
+    times   = 100,
+    minsize = 5
+  )
+  
+  results_pb[[grp]] <- acts_pb
+}
+
+actsW_pseudobulk <- bind_rows(results_pb, .id = "pseudo_bulk_group") %>%
+  as_tibble()
+
+
+acts_norm <- actsW_pseudobulk %>%
+  filter(statistic == "norm_wmean") %>%
+  mutate(condition = str_remove(pseudo_bulk_group, "_S[0-9]+$"),
+         week = str_extract(pseudo_bulk_group, "S[0-9]+"))
+
+
+selected_TFs <- c("IRF1", "IRF2", "IRF3", "STAT1","TBX21")
+
+tf_scores_s6_minus_s1 <- acts_norm %>%
+  filter(source %in% selected_TFs, week %in% c("S1", "S6")) %>%
+
+  pivot_wider(
+    names_from = week,   
+    values_from = score, 
+    id_cols = c(condition, source) 
+  ) %>%
+  
+  mutate(score_S6_minus_S1 = abs(S6 - S1)) %>%
+  
+  dplyr::select(condition, source, S1, S6, score_S6_minus_S1, everything()) %>%
+  
+  mutate(
+    Traitement = str_match(condition, "^C\\d+_[TM]\\d+_([^_]+)")[,2],
+    Reponse    = str_match(condition, "^C\\d+_[TM]\\d+_[^_]+_([^_]+)$")[,2]
+  )
+
+
+tf_scores_s6_minus_s1 <- drop_na(tf_scores_s6_minus_s1)
+
+ordre_traitements <- c("Ipi-Nivo", "Certolizumab", "Infliximab") 
+tf_scores_s6_minus_s1$Traitement <- factor(tf_scores_s6_minus_s1$Traitement, levels = ordre_traitements)
+
+tf_scores_s6_minus_s1$Reponse <- factor(tf_scores_s6_minus_s1$Reponse)
+
+tf_scores_s6_minus_s1 <- tf_scores_s6_minus_s1 %>%
+  filter(source %in% c("IRF1", "IRF2", "IRF3", "STAT1","TBX21"))
+
+heatmap_data_wide <- tf_scores_s6_minus_s1 %>%
+  dplyr::select(condition, source, score_S6_minus_S1) %>% 
+  pivot_wider(
+    names_from = condition,      
+    values_from = score_S6_minus_S1 
+  )
+
+heatmap_matrix <- heatmap_data_wide %>%
+  tibble::column_to_rownames(var = "source") %>% 
+  as.matrix()
+
+wilcox_results_list <- list()
+
+unique_sources <- unique(tf_scores_s6_minus_s1$source)
+
+for (gene_name in unique_sources) {
+  cat(paste0("  Gène : ", gene_name, "\n"))
+  
+  gene_data_for_test <- tf_scores_s6_minus_s1 %>%
+    filter(source == gene_name)
+  
+  treatments_for_gene <- unique(gene_data_for_test$Traitement)
+  
+  if (length(treatments_for_gene) < 2) {
+    cat(paste0("    Pas assez de traitements différents pour le gène ", gene_name, ". Skipping.\n"))
+    next
+  }
+  
+  treatment_pairs <- combn(treatments_for_gene, 2, simplify = FALSE)
+  
+  gene_p_values <- data.frame()
+  
+  for (pair in treatment_pairs) {
+    trt1 <- pair[1]
+    trt2 <- pair[2]
+    
+    data_trt1 <- gene_data_for_test %>%
+      filter(Traitement == trt1) %>%
+      pull(score_S6_minus_S1)
+    
+    data_trt2 <- gene_data_for_test %>%
+      filter(Traitement == trt2) %>%
+      pull(score_S6_minus_S1)
+    
+    if (length(data_trt1) > 0 && length(data_trt2) > 0) {
+      test_result <- tryCatch({
+        wilcox.test(data_trt1, data_trt2)
+      }, error = function(e) {
+        cat(paste0("    Erreur pour ", gene_name, " (", trt1, " vs ", trt2, "): ", e$message, "\n"))
+        list(p.value = NA_real_)
+      })
+      
+      gene_p_values <- bind_rows(gene_p_values, tibble(
+        group1 = trt1,
+        group2 = trt2,
+        p = test_result$p.value 
+      ))
+    } else {
+      cat(paste0("    Données insuffisantes pour la comparaison ", trt1, " vs ", trt2, " pour le gène ", gene_name, ". Skipping.\n"))
+    }
+  }
+  
+  if (nrow(gene_p_values) > 0) {
+    gene_p_values$gene <- gene_name 
+    wilcox_results_list[[gene_name]] <- gene_p_values
+  } else {
+    cat(paste0("    Aucune p-value calculée pour le gène ", gene_name, ".\n"))
+  }
+}
+
+wilcox_all_results_base <- bind_rows(wilcox_results_list)
+
+significance_threshold <- 0.05
+
+wilcox_all_results_base <- wilcox_all_results_base %>%
+  mutate(comparison_id = paste0(group1, "_vs_", group2))
+
+annotation_df_wide <- wilcox_all_results_base %>%
+  dplyr::select(gene, comparison_id, p) %>%
+  pivot_wider(
+    names_from = comparison_id,
+    values_from = p,
+    values_fill = NA_real_ 
+  ) %>%
+  mutate(across(starts_with("Certolizumab_vs_") | starts_with("Infliximab_vs_") | starts_with("Adalimumab_vs_"),
+                ~ ifelse(.x < significance_threshold, "oui", "non"))) 
+
+unique_sources_all <- unique(tf_scores_s6_minus_s1$source) 
+final_row_annotation_multi_col <- tibble(source = unique_sources_all) %>%
+  left_join(annotation_df_wide, by = c("source" = "gene")) %>%
+  mutate(across(starts_with("Certolizumab_vs_") | starts_with("Infliximab_vs_"),
+                ~ replace_na(.x, "non"))) %>%
+  column_to_rownames(var = "source") 
+
+for (col_name in colnames(final_row_annotation_multi_col)) {
+  final_row_annotation_multi_col[[col_name]] <- factor(final_row_annotation_multi_col[[col_name]], levels = c("non", "oui"))
+}
+
+heatmap_matrix <- tf_scores_s6_minus_s1 %>%
+  dplyr::select(condition, source, score_S6_minus_S1) %>%
+  pivot_wider(
+    names_from = condition,
+    values_from = score_S6_minus_S1
+  ) %>%
+  tibble::column_to_rownames(var = "source") %>%
+  as.matrix()
+
+column_info <- tf_scores_s6_minus_s1 %>%
+  distinct(condition, Traitement, Reponse) %>%
+  filter(condition %in% colnames(heatmap_matrix)) %>%
+  arrange(Traitement) 
+
+ordered_colnames <- column_info$condition
+if(length(ordered_colnames) == 0 || !all(ordered_colnames %in% colnames(heatmap_matrix))) {
+  warning("Les noms de colonnes triés ne correspondent pas entièrement aux noms de colonnes de la matrice de la heatmap. Vérifiez les conditions et traitements.")
+  heatmap_matrix_ordered <- heatmap_matrix
+  annotation_col_df <- data.frame(Traitement = rep("Unknown", ncol(heatmap_matrix)), row.names = colnames(heatmap_matrix))
+} else {
+  heatmap_matrix_ordered <- heatmap_matrix[, ordered_colnames, drop = FALSE]
+  annotation_col_df <- column_info %>%
+    tibble::column_to_rownames(var = "condition") %>%
+    dplyr::select(Traitement,Reponse)
+}
+
+ann_colors_rows_list <- list()
+for (col_name in colnames(final_row_annotation_multi_col)) {
+  ann_colors_rows_list[[col_name]] <- c("oui" = "yellow", "non" = "lightgrey") 
+}
+
+annotation_colors <- list(
+  Traitement = c("Certolizumab" = "#5f4a95", "Infliximab" = "#4570b6", "Ipi-Nivo" = "#46b9ab"),
+  Reponse = c("R" = "darkgreen", "NR" = "darkred")
+)
+
+all_ann_colors <- c(ann_colors_rows_list, annotation_colors)
+
+
+scaled_matrix <- t(scale(t(heatmap_matrix_ordered), center = TRUE))
+
+max_abs_val <- max(abs(scaled_matrix), na.rm = TRUE)
+
+breaks_list <- seq(-max_abs_val, max_abs_val, length.out = 101) 
+
+color_palette <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(100) 
+
+desired_treatment_order <- c("Certolizumab", "Infliximab", "Ipi-Nivo")
+
+annotation_col_df$Traitement <- factor(
+  annotation_col_df$Traitement,
+  levels = desired_treatment_order
+)
+
+annotation_col_df$Reponse <- as.character(annotation_col_df$Reponse)
+
+annotation_col_df <- annotation_col_df %>%
+  mutate(Reponse = ifelse(grepl("T5", rownames(annotation_col_df)), "R", Reponse))
+
+annotation_col_df$Reponse <- factor(annotation_col_df$Reponse, levels = c("R", "NR"))
+
+ordered_colnames <- rownames(annotation_col_df)[
+  order(annotation_col_df$Traitement)
+]
+
+heatmap_matrix_ordered <- heatmap_matrix[, ordered_colnames, drop = FALSE]
+
+annotation_col_df_ordered <- annotation_col_df[ordered_colnames, , drop = FALSE]
+
+cols_per_trt <- table(annotation_col_df_ordered$Traitement)
+gaps_positions <- cumsum(cols_per_trt)[1:(length(cols_per_trt) - 1)]
+
+pheatmap(
+  mat            = scaled_matrix,              
+  color          = color_palette,
+  breaks         = breaks_list,
+  cluster_rows   = FALSE,
+  cluster_cols   = FALSE,                      
+  show_rownames  = TRUE,
+  show_colnames  = TRUE,
+  annotation_row = final_row_annotation_multi_col,
+  annotation_col = annotation_col_df_ordered,
+  annotation_colors = all_ann_colors,
+  gaps_col       = gaps_positions,             
+  fontsize_row   = 8,
+  fontsize_col   = 8,
+  main           = "Scores S6-S1 par condition et gène (Centré sur 0)"
+  
+)
+```
+
+<br>
+
+```{r Extended data Fig.4.b}
+Treg <- readRDS("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/Treg_SCSE.rds")
+
+Treg_C <- subset(Treg, subset = Traitement == "Certolizumab")
+
+pseudo <- AggregateExpression(Treg_C, assays = "RNA", return.seurat = T, group.by = c("Week", "orig.ident"))
+
+pseudo$celltype.week <- pseudo$orig.ident
+
+Idents(pseudo) <- "celltype.week"
+
+counts <- GetAssayData(pseudo, assay = "RNA", slot = "counts")
+
+cpm_matrix <- cpm(counts)
+
+keep_genes <- rowSums(cpm_matrix > 0.5) >= (ncol(cpm_matrix) * 0.5)
+
+filtered_counts <- counts[keep_genes, ]
+
+pseudo <- SetAssayData(pseudo, assay = "RNA", slot = "counts", new.data = filtered_counts)
+
+
+bulk.mono.de <- FindMarkers(object = pseudo, 
+                         ident.1 = "S1", 
+                         ident.2 = "S6",
+                         test.use = "DESeq2")
+
+bulk.mono.de$gene <- rownames(bulk.mono.de)
+
+significant_genes1 <- bulk.mono.de %>% 
+  filter(p_val < 0.01 & abs(avg_log2FC) > 1.5) %>% 
+  arrange(desc(abs(avg_log2FC)))
+
+Treg_I <- subset(Treg, subset = Traitement == "Infliximab")
+
+pseudo <- AggregateExpression(Treg_I, assays = "RNA", return.seurat = T, group.by = c("Week", "orig.ident"))
+
+pseudo$celltype.week <- pseudo$orig.ident
+
+Idents(pseudo) <- "celltype.week"
+
+counts <- GetAssayData(pseudo, assay = "RNA", slot = "counts")
+
+cpm_matrix <- cpm(counts)
+
+keep_genes <- rowSums(cpm_matrix > 0.5) >= (ncol(cpm_matrix) * 0.5)
+
+filtered_counts <- counts[keep_genes, ]
+
+pseudo <- SetAssayData(pseudo, assay = "RNA", slot = "counts", new.data = filtered_counts)
+
+bulk.mono.de <- FindMarkers(object = pseudo, 
+                         ident.1 = "S1", 
+                         ident.2 = "S6",
+                         test.use = "DESeq2")
+
+bulk.mono.de$gene <- rownames(bulk.mono.de)
+
+significant_genes2 <- bulk.mono.de %>% 
+  filter(p_val < 0.01 & abs(avg_log2FC) > 1.5) %>% 
+  arrange(desc(abs(avg_log2FC)))
+
+Treg_IN <- subset(Treg, subset = Traitement == "Ipi-Nivo")
+
+pseudo <- AggregateExpression(Treg_IN, assays = "RNA", return.seurat = T, group.by = c("Week", "orig.ident"))
+
+pseudo$celltype.week <- pseudo$orig.ident
+
+Idents(pseudo) <- "celltype.week"
+
+counts <- GetAssayData(pseudo, assay = "RNA", slot = "counts")
+
+cpm_matrix <- cpm(counts)
+
+keep_genes <- rowSums(cpm_matrix > 0.5) >= (ncol(cpm_matrix) * 0.5)
+
+filtered_counts <- counts[keep_genes, ]
+
+pseudo <- SetAssayData(pseudo, assay = "RNA", slot = "counts", new.data = filtered_counts)
+
+bulk.mono.de <- FindMarkers(object = pseudo, 
+                         ident.1 = "S1", 
+                         ident.2 = "S6",
+                         test.use = "DESeq2")
+
+bulk.mono.de$gene <- rownames(bulk.mono.de)
+
+significant_genes3 <- bulk.mono.de %>% 
+  filter(p_val < 0.01 & abs(avg_log2FC) > 1.5) %>% 
+  arrange(desc(abs(avg_log2FC)))
+
+significant_genes <- bind_rows(significant_genes1,significant_genes2,significant_genes3)
+
+significant_genes <- significant_genes %>%
+  distinct(gene, .keep_all = TRUE)
+
+
+Tregf <- subset(Treg, orig.ident == c("T1"), invert = TRUE)
+Tregf <- subset(Tregf, orig.ident == c("M28"), invert = TRUE)
+
+pseudo <- AggregateExpression(Tregf, assays = "RNA", return.seurat = T, group.by = c("Week", "orig.ident"))
+
+pseudo$celltype.week <- pseudo$orig.ident
+Idents(pseudo) <- "celltype.week"
+
+counts <- GetAssayData(pseudo, assay = "RNA", slot = "counts")
+cpm_matrix <- cpm(counts)
+
+keep_genes <- rowSums(cpm_matrix > 0.5) >= (ncol(cpm_matrix) * 0.5)
+filtered_counts <- counts[keep_genes, ]
+
+pseudo <- SetAssayData(pseudo, assay = "RNA", slot = "counts", new.data = filtered_counts)
+
+bulk.mono.de <- FindMarkers(
+  object = pseudo, 
+  ident.1 = "S1", 
+  ident.2 = "S6",
+  test.use = "DESeq2"
+)
+
+bulk.mono.de$gene <- rownames(bulk.mono.de)
+
+pseudo_counts <- pseudo[["RNA"]]$data[significant_genes$gene, ]
+pseudo_counts <- as.matrix(pseudo_counts)
+pseudo_counts_scaled <- t(scale(t(pseudo_counts), center = TRUE))
+
+all_genes <- rownames(pseudo_counts_scaled)
+
+annotation_row <- data.frame(
+  certo    = factor(ifelse(all_genes %in% significant_genes1$gene, "yes", "no"), levels = c("no","yes")),
+  inflix   = factor(ifelse(all_genes %in% significant_genes2$gene, "yes", "no"), levels = c("no","yes")),
+  ipi_nivo = factor(ifelse(all_genes %in% significant_genes3$gene, "yes", "no"), levels = c("no","yes")),
+  row.names = all_genes
+)
+
+ann_colors_rows <- list(
+  certo    = c(no = "lightgrey", yes = "yellow"),
+  inflix   = c(no = "lightgrey", yes = "yellow"),
+  ipi_nivo = c(no = "lightgrey", yes = "yellow")
+)
+
+raw_counts <- GetAssayData(pseudo, assay = "RNA", slot = "counts")
+all_cols <- colnames(raw_counts)
+
+w0_cols <- grep("^S1_", all_cols, value = TRUE)
+w6_cols <- grep("^S6_", all_cols, value = TRUE)
+
+patients_w0 <- sub("^S1_", "", w0_cols)
+patients_w6 <- sub("^S6_", "", w6_cols)
+common_patients <- intersect(patients_w0, patients_w6)
+
+log2fc_matrix <- sapply(common_patients, function(p) {
+  col_w0 <- paste0("S1_", p)
+  col_w6 <- paste0("S6_", p)
+  log2((raw_counts[, col_w6] + 1) / (raw_counts[, col_w0] + 1))
+})
+
+significant_genes <- significant_genes[!significant_genes$gene %in% c("GRK7","PPBP"), ]
+
+rownames(log2fc_matrix) <- rownames(raw_counts)
+log2fc_matrix <- log2fc_matrix[significant_genes$gene, , drop = FALSE]
+log2fc_scaled <- t(scale(t(log2fc_matrix), center = TRUE))
+
+metadata_treg <- Tregf@meta.data
+treatment_info <- unique(metadata_treg[, c("orig.ident", "Traitement", "Reponse")])
+treatment_info$Reponse[treatment_info$orig.ident == "T5"] <- "R"
+
+traitements <- setNames(treatment_info$Traitement, treatment_info$orig.ident)
+reponses    <- setNames(treatment_info$Reponse,    treatment_info$orig.ident)
+
+annotation_col <- data.frame(
+  Reponse    = reponses[colnames(log2fc_scaled)],
+  Traitement = traitements[colnames(log2fc_scaled)]
+)
+rownames(annotation_col) <- colnames(log2fc_scaled)
+annotation_col <- annotation_col[, c("Reponse", "Traitement")]
+
+traitement_levels <- c("Ipi-Nivo", "Certolizumab", "Infliximab")
+annotation_col$Traitement <- factor(annotation_col$Traitement, levels = traitement_levels)
+ordered_patients <- rownames(annotation_col)[order(annotation_col$Traitement)]
+log2fc_scaled <- log2fc_scaled[, ordered_patients]
+annotation_col <- annotation_col[ordered_patients, , drop = FALSE]
+
+mat <- log2fc_scaled[!grepl("^(AL|AC|LINC)[0-9]", rownames(log2fc_scaled)), ]
+
+traitement_vector <- annotation_col$Traitement
+gaps_col <- which(traitement_vector[-1] != traitement_vector[-length(traitement_vector)])
+
+colors <- rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu"))
+colors.use <- colorRampPalette(colors)(100)
+
+annotation_colors <- list(
+  Reponse = c("R" = "darkgreen", "NR" = "darkred"),
+  Traitement = c("Certolizumab" = "#5f4a95", "Infliximab"  = "#4570b6", "Ipi-Nivo" = "#46b9ab")
+)
+
+treatments <- annotation_col$Traitement
+
+wilcox_results <- t(apply(mat, 1, function(values) {
+  group1 <- values[treatments == "Certolizumab"]
+  group2 <- values[treatments == "Infliximab"]
+  group3 <- values[treatments == "Ipi-Nivo"]
+  
+  p1 <- tryCatch(wilcox.test(group1, group2)$p.value, error = function(e) NA)
+  p2 <- tryCatch(wilcox.test(group1, group3)$p.value, error = function(e) NA)
+  p3 <- tryCatch(wilcox.test(group2, group3)$p.value, error = function(e) NA)
+  
+  c(Certo_vs_Inflix = p1, Certo_vs_IpiNivo = p2, Inflix_vs_IpiNivo = p3)
+}))
+
+wilcox_results <- as.data.frame(wilcox_results)
+rownames(wilcox_results) <- rownames(mat)
+
+wilcox_binary <- as.data.frame(lapply(wilcox_results, function(x) ifelse(x < 0.05, "yes", "no")))
+rownames(wilcox_binary) <- rownames(mat)
+
+annotation_row2 <- cbind(annotation_row[rownames(mat), ], wilcox_binary)
+
+ann_colors_rows2 <- c(
+  ann_colors_rows,
+  list(
+    Certo_vs_Inflix   = c(no = "lightgrey", yes = "orange"),
+    Certo_vs_IpiNivo  = c(no = "lightgrey", yes = "orange"),
+    Inflix_vs_IpiNivo = c(no = "lightgrey", yes = "orange")
+  )
+)
+
+pheatmap(
+  mat,
+  cluster_rows      = TRUE,
+  cluster_cols      = FALSE,
+  show_rownames     = TRUE,
+  annotation_col    = annotation_col,
+  annotation_row    = annotation_row2,
+  annotation_colors = c(annotation_colors, ann_colors_rows2),
+  color             = colors.use,
+  main              = "Heatmap log2FC W6/W0 par patient",
+  breaks            = seq(-2, 2, length.out = 101),
+  gaps_col          = gaps_col
+)
+
+```
+
+<br>
+
+```{r Extended data Fig.4.c}
+genes_interest <- c("HDAC9","STAT1","PCCA","MIEN1")
+
+df_plot <- mat[genes_interest, , drop = FALSE] %>%
+  as.data.frame() %>%
+  rownames_to_column("Gene") %>%
+  pivot_longer(-Gene, names_to = "Patient", values_to = "Expression")
+
+traitement_par_patient <- Treg@meta.data %>%
+  dplyr::select(orig.ident, Traitement) %>%
+  distinct() %>%
+  tibble::deframe()
+
+df_plot <- df_plot %>%
+  mutate(Traitement = traitement_par_patient[Patient])
+
+df_plot <- df_plot %>%
+  mutate(Traitement = factor(
+    Traitement,
+    levels = c("Ipi-Nivo", "Certolizumab", "Infliximab")
+  ))
+
+for (gene in genes_interest) {
+  df_gene <- df_plot %>%
+    filter(Gene == gene)
+  
+    P <- ggplot(df_gene, aes(x = Traitement, y = Expression, fill = Traitement)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+    geom_jitter(width = 0.2, size = 1, alpha = 0.6) +
+    labs(title = paste0("Expression de ", gene),
+         x = "Traitement",
+         y = "Expression") +
+    theme_my() +
+    scale_fill_manual(values = c(
+      "Ipi-Nivo"    = "#46b9ab",
+      "Certolizumab" = "#5f4a95",
+      "Infliximab"  = "#4570b6"
+      
+    )) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    ggsave(filename = paste0("Boxplot_Treg_",gene,".svg"),plot = P, path = "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/Figures_clean_finales/",width=5,height=3)
+    print(P)
+}
+
+
+
+```
+
+```{r Extended data Fig.4.d}
+Pathways=c("/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/h.all.v2024.1.Hs.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.reactome.v2024.1.Hs.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c2.cp.kegg_medicus.v2024.1.Hs.symbols.gmt","/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/DATA/pathways/c5.go.bp.v2024.1.Hs.symbols.gmt" )
+
+liste <- significant_genes3$gene
+
+bgset <- rownames(Treg_IN)[rowSums(Treg_IN[["RNA"]]$counts)>0]
+
+pp=lapply(Pathways, function(x){
+
+pathways.hallmark <- fgsea::gmtPathways(x)
+
+orr=fgsea::fora(pathways = pathways.hallmark,genes=liste,universe = bgset)
+
+return(orr)
+})
+
+dat=Reduce(rbind,pp) %>% dplyr::arrange((padj))
+
+if(nrow(dat)!=0){
+  dat$overlapGenes <- sapply(dat$overlapGenes, function(x) paste(x, collapse = ";"))
+
+  plt=dat %>% dplyr::arrange((padj)) %>%
+  as.data.frame() %>%
+  dplyr::mutate(pathway=factor(pathway,levels=rev(pathway)),
+                GeneRatio=overlap/size)
+
+  plt2=ggplot(plt[1:10,] %>%
+                dplyr::mutate(pathway=str_replace_all(pathway,"_"," ")) %>%
+                dplyr::mutate(pathway=factor(pathway,levels=rev(pathway))),aes(x=padj,y=pathway,color=padj))+
+    geom_point(aes(size = GeneRatio), alpha = 0.5) +
+    scale_size(
+      range = c(3, 10)
+    )+
+    theme(
+    )+xlab("adjusted p-value") +
+    scale_y_discrete(labels = scales::label_wrap(30))+theme_my()
+
+}
+# ggsave("ORA_Treg_IPI.svg",plot = plt2,path = "/home/etienne.leclercq/Bureau/Etienne_SC/UNIFICATION_TICIMEL_MELANF/FIGURES_PAPIER/Figures_clean_finales/",width = 7,height = 6)
+```
+
+![ORA](Top_10_pathways_IPI.png)
+
+
+
+
+
+
+
+

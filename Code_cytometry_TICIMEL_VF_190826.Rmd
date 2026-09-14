@@ -1,0 +1,2018 @@
+---
+title: "Code_cytometry_TICIMEL"
+author: "Benjamin Jung"
+date: "2025-01-14"
+output: html_document
+---
+
+```{text, session Info}
+> sessionInfo()
+R version 4.6.1 (2026-06-24 ucrt)
+Platform: x86_64-w64-mingw32/x64
+Running under: Windows 10 x64 (build 19045)
+
+Matrix products: default
+  LAPACK version 3.12.1
+
+locale:
+[1] LC_COLLATE=French_France.utf8  LC_CTYPE=French_France.utf8    LC_MONETARY=French_France.utf8
+[4] LC_NUMERIC=C                   LC_TIME=French_France.utf8    
+
+time zone: Europe/Paris
+tzcode source: internal
+
+attached base packages:
+[1] grid      stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+[1] svglite_2.2.2         circlize_0.4.18       ComplexHeatmap_2.28.0 readxl_1.5.0         
+[5] ggplot2_4.0.3        
+
+loaded via a namespace (and not attached):
+ [1] generics_0.1.4      shape_1.4.6.1       digest_0.6.39       magrittr_2.0.5      evaluate_1.0.5     
+ [6] RColorBrewer_1.1-3  iterators_1.0.14    fastmap_1.2.0       cellranger_1.1.0    foreach_1.5.2      
+[11] doParallel_1.0.17   GlobalOptions_0.1.4 scales_1.4.0        codetools_0.2-20    textshaping_1.0.5  
+[16] cli_3.6.6           rlang_1.3.0         crayon_1.5.3        withr_3.0.3         yaml_2.3.12        
+[21] otel_0.2.0          tools_4.6.1         parallel_4.6.1      dplyr_1.2.1         colorspace_2.1-3   
+[26] GetoptLong_1.1.1    BiocGenerics_0.58.1 vctrs_0.7.3         R6_2.6.1            png_0.1-9          
+[31] stats4_4.6.1        matrixStats_1.5.0   lifecycle_1.0.5     S4Vectors_0.50.1    IRanges_2.46.0     
+[36] clue_0.3-68         cluster_2.1.8.2     pkgconfig_2.0.3     pillar_1.11.1       gtable_0.3.6       
+[41] glue_1.8.1          systemfonts_1.3.2   xfun_0.60           tibble_3.3.1        tidyselect_1.2.1   
+[46] rstudioapi_0.19.0   knitr_1.51          farver_2.1.2        rjson_0.2.23        htmltools_0.5.9    
+[51] rmarkdown_2.31      compiler_4.6.1      S7_0.2.2    
+
+```
+
+```{r, libraries}
+rm(list = ls())
+
+library(ggplot2)
+library(readxl)
+library(ComplexHeatmap)
+library(circlize)
+library(svglite)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(ggpubr)
+library(ggrepel)
+library(ComplexHeatmap)
+library(circlize)
+library(tibble)
+library(dplyr)
+library(corrplot)
+library(circlize)
+library(svglite)
+library(dplyr)
+library(tibble)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(readr)
+library(ggplot2)
+library(tibble)
+library(RColorBrewer)
+
+
+set.seed(07041968)
+
+```
+
+
+---Code for ancylary part (Figure 1)---
+
+This part of the code generates heatmaps of log2FC (W6/W0 + 1) proportions of memory subsets (Naive, CM, EM, TEMRA) for CD4 (Fig. 1g) and CD8 (Fig. 1h).
+```{r , HM CD4 Pop Mem , fig.height=5, fig.width=15}
+rm(list=ls())
+data <- readxl::read_excel('C:/Users/benjamin.jung/Desktop/for_hm_CD4.xlsx')
+data <- data[data$`Essai clinique` == "TICIMEL", ]
+data_num <- data[, sapply(data, is.numeric)]
+data_matrix_scaled <- t(scale(t(data_num)))
+rownames(data_matrix_scaled) <- data$`Patient`
+data_matrix_scaled_t <- t(data_matrix_scaled)
+
+annotation_Réponse <- data$Réponse[match(colnames(data_matrix_scaled_t), data$`Patient`)]
+annotation_cohort <- data$Cohorte[match(colnames(data_matrix_scaled_t), data$`Patient`)]
+
+top_annotation <- HeatmapAnnotation(
+  Cohort = factor(annotation_cohort),
+  Response = factor(annotation_Réponse),
+  
+  col = list(
+    Cohort = c("Ipi + Nivo + Certo" = "#5f4a95", "Ipi + Nivo + Inflix"= "#4570b6"),
+    Response = c("R" = "darkgreen", "NR" = "darkred")
+  ),
+  
+  annotation_name_gp = grid::gpar(fontface = "bold", fontsize = 12)
+)
+
+colors <- rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu"))
+colors.use <- colorRampPalette(colors)(100)
+ordre_lignes <- c("Naive", "CM", "EM", "TEMRA")
+data_matrix_scaled_t <- data_matrix_scaled_t[ordre_lignes, ]
+
+heatmap <- Heatmap(
+  data_matrix_scaled_t,
+  name = "LOG2FC(W6/W0)+1)",
+  column_title = "Patients",
+  cluster_rows = FALSE,
+  cluster_columns = TRUE,
+  column_split = factor(annotation_cohort, levels = c("Ipi + Nivo + Certo", "Ipi + Nivo + Inflix")),
+  top_annotation = top_annotation,
+  col = colors.use,
+  row_names_gp = grid::gpar(fontface = "bold", fontsize = 15)
+)
+
+draw(
+  heatmap,
+  heatmap_legend_side = "left",
+  annotation_legend_side = "left",
+  padding = grid::unit(c(2, 2, 2, 8), "cm")
+)
+
+
+svglite::svglite(
+  "C:/Users/benjamin.jung/Desktop/Figure 1 TICIMEL (clinique 1)/heatmap_CD4_TICIMEL_only.svg",
+  width  = 1900/150,  
+  height = 700/150    
+)
+draw(
+  heatmap,
+  heatmap_legend_side = "left",
+  annotation_legend_side = "left",
+  padding = grid::unit(c(2, 2, 2, 8), "cm")
+)
+dev.off()
+
+```
+
+```{r , HM CD8 Pop Mem , fig.height=5, fig.width=15}
+rm(list=ls())
+data <- readxl::read_excel('C:/Users/benjamin.jung/Desktop/for_hm_CD8.xlsx')
+data <- data[data$`Essai clinique` == "TICIMEL", ]
+data_num <- data[, sapply(data, is.numeric)]
+data_matrix_scaled <- t(scale(t(data_num)))
+rownames(data_matrix_scaled) <- data$`Patient`
+data_matrix_scaled_t <- t(data_matrix_scaled)
+
+annotation_Réponse <- data$Réponse[match(colnames(data_matrix_scaled_t), data$`Patient`)]
+annotation_cohort <- data$Cohorte[match(colnames(data_matrix_scaled_t), data$`Patient`)]
+
+top_annotation <- HeatmapAnnotation(
+  Cohort = factor(annotation_cohort),
+  Response = factor(annotation_Réponse),
+  
+  col = list(
+    Cohort = c("Ipi + Nivo + Certo" = "#5f4a95", "Ipi + Nivo + Inflix"= "#4570b6"),
+    Response = c("R" = "darkgreen", "NR" = "darkred")
+  ),
+  
+  annotation_name_gp = grid::gpar(fontface = "bold", fontsize = 12)
+)
+
+
+colors <- rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu"))
+colors.use <- colorRampPalette(colors)(100)
+ordre_lignes <- c("Naive", "CM", "EM", "TEMRA")
+data_matrix_scaled_t <- data_matrix_scaled_t[ordre_lignes, ]
+
+
+heatmap <- Heatmap(
+  data_matrix_scaled_t,
+  name = "LOG2FC(W6/W0)+1)",
+  column_title = "Patients",
+  cluster_rows = FALSE,
+  cluster_columns = TRUE,
+  column_split = factor(annotation_cohort, levels = c("Ipi + Nivo + Certo", "Ipi + Nivo + Inflix")),
+  top_annotation = top_annotation,
+  col = colors.use,
+  row_names_gp = grid::gpar(fontface = "bold", fontsize = 15)
+)
+
+
+draw(
+  heatmap,
+  heatmap_legend_side = "left",
+  annotation_legend_side = "left",
+  padding = grid::unit(c(2, 2, 2, 8), "cm")
+)
+
+svglite::svglite(
+  "C:/Users/benjamin.jung/Desktop/Figure 1 TICIMEL (clinique 1)/heatmap_CD8_TICIMEL.svg",
+  width  = 1900/150,
+  height = 700/150   
+)
+draw(
+  heatmap,
+  heatmap_legend_side = "left",
+  annotation_legend_side = "left",
+  padding = grid::unit(c(2, 2, 2, 8), "cm")
+)
+dev.off()
+
+
+```
+
+
+---Code for the analysis of MFI from TILs in B16OVA tumor-bearing WT mice (Figure 3)---
+
+```{r clean and functions}
+rm(list = ls())
+
+# Fonction pour convertir proprement en numérique
+convert_to_numeric <- function(x) {
+  if (is.character(x)) {
+    x <- gsub(",", ".", x) # Remplacer les virgules par des points si nécessaire
+    x <- gsub(" ", "", x)  # Supprimer les espaces
+    x <- as.numeric(x)     # Convertir en numérique
+  }
+  return(x)
+}
+
+# Fonction pour extraire uniquement le nom du marqueur (dernier élément après "___")
+rename_columns <- function(col_names) {
+  sapply(col_names, function(x) {
+    if (grepl("___", x)) {
+      return(sub(".*___", "", x))  # Garde seulement ce qui est après "___"
+    } else {
+      return(x)  # Garde les autres colonnes inchangées
+    }
+  })
+}
+
+
+
+```
+
+This part of the code loads the MFI data of the CD4 regulatory cluster from the tumor the markers of interest (TIGIT, PD-1, CD39, CTLA-4 and PDL1). The data are then scaled for each marker to generate and a heatmap is generated(Fig.3.f), treatment (Bitherapy of Tritherapy) and tumor evolution from 7 are shown as annotations.
+```{r Heatmap MFI CD4 regulatory cluster, fig.width=14, fig.height=5}
+
+df <- read.csv('C:/Users/benjamin.jung/Desktop/MFI_Regulatory_CD4_Tumor.csv', sep = ",", stringsAsFactors = FALSE)
+colnames(df) <- rename_columns(colnames(df))
+
+df_HM <- df
+df_HM[, setdiff(colnames(df_HM), c("file", "Treatment","file2"))] <- lapply(df_HM[,setdiff(colnames(df_HM), c("file", "Treatment","file2"))], convert_to_numeric)
+
+df_HM <- df_HM %>%
+  dplyr::select(-file) %>%
+  tibble::column_to_rownames("file2")
+
+df_HM_t <- t(as.matrix(df_HM))
+annotation_treatment <- df_HM$`Treatment`[match(colnames(df_HM_t), df$`file2`)]
+annotation_tumor_evolution_fromJ7 <- df_HM$`Tumor_evolution_fromJ7`[match(colnames(df_HM_t), df$`file2`)]
+
+df_HM_t <- df_HM_t[!rownames(df_HM_t) %in% c("Treatment", 
+                                                   "Tumor_size",
+                                                   "Tumor_evolution_frommax",
+                                                   "Tumor_evolution_fromJ7",
+                                                   "Tumor_volume_J17",
+                                                   "Tumor_weight_J17"), ]
+
+matrix <- apply(df_HM_t, 2, function(x) as.numeric(x))
+rownames(matrix) <- rownames(df_HM_t)
+matrix_scaled <- t(scale(t(matrix)))  
+
+col_fun_tumor_evolution_J7 <- colorRamp2(c(min(annotation_tumor_evolution_fromJ7, na.rm = TRUE), 0, max(annotation_tumor_evolution_fromJ7, na.rm = TRUE)), 
+                                       
+                                        c("darkgreen", "white", "darkred"))
+
+
+top_annotation <- HeatmapAnnotation(
+  `Treatment` = factor(annotation_treatment),
+  `Tumor evolution from day 7 (log2FC)` = anno_barplot(
+    annotation_tumor_evolution_fromJ7, 
+    gp = gpar(fill = col_fun_tumor_evolution_J7(annotation_tumor_evolution_fromJ7), col = "black"),
+    height = unit(2, "cm")
+  ),
+  col = list(`Treatment` = c("Bitherapy" = "#06AC8B", "Tritherapy" = "#675FAA")),
+  annotation_name_gp = gpar(fontface = "bold", fontsize = 12)
+)
+
+legend_tumor_evolution_J7 <- Legend(
+  title = "Tumor evolution from day 7 (log2FC)",
+  col_fun = col_fun_tumor_evolution_J7,
+  at = c(-2, -1, 0, 1, 2), 
+  labels = c("-2", "-1", "0", "1", "2"),
+  direction = "horizontal",
+  labels_gp = gpar(fontsize = 10)
+)
+
+markers_to_keep <- c("TIGIT.median", "PD.1.median", "CD39.median", "CTLA.4.median", "PDL1.median" ) 
+filtered_matrix <- matrix_scaled[rownames(matrix_scaled) %in% markers_to_keep, ]
+rownames(filtered_matrix) <- gsub("\\.median", ".MFI", rownames(filtered_matrix))
+
+
+
+colors <- rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu"))
+colors.use <- colorRampPalette(colors)(100)
+
+heatmap1 <- Heatmap(
+  filtered_matrix, 
+  name = "zscore",
+  column_title = "Mice",
+  row_title = "Markers",
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  top_annotation = top_annotation,
+  row_names_gp = gpar(fontface = "bold", fontsize = 15),
+  column_split = factor(annotation_treatment, levels = c("Bitherapy", "Tritherapy")),
+  show_column_names = F,
+  col = colors.use,
+  heatmap_legend_param = list(
+    direction = "horizontal",
+    title_position = "topcenter"
+  )
+)
+
+draw(heatmap1, 
+     heatmap_legend_side = "left", 
+     annotation_legend_side = "left", 
+     padding = unit(c(10, 10, 10, 10), "mm"), 
+     legend_gap = unit(1, "mm"),
+     annotation_legend_list = list(legend_tumor_evolution_J7)
+)
+
+
+svglite::svglite("C:/Users/benjamin.jung/Desktop/MFI_Regulatory_CD4_Tumor.svg",
+  width  = 1900/150,  
+  height = 700/150   
+)
+draw(
+heatmap1, 
+     heatmap_legend_side = "left", 
+     annotation_legend_side = "left", 
+     padding = unit(c(10, 10, 10, 10), "mm"), 
+     legend_gap = unit(1, "mm"),
+     annotation_legend_list = list(legend_tumor_evolution_J7)
+)
+dev.off()
+
+
+```
+
+This part of the code loads the MFI data of the CD8 exhausted cluster from the tumor and selects the markers of interest (TIGIT, TIM-3, CD39, CD226 and PDL1). The data are then scaled for each marker and a heatmap is generated (Fig.3.h), with treatment (Bitherapy or Tritherapy) and tumor evolution from day 7 shown as annotations.
+```{r Heatmap MFI CD8 exhausted cluster, fig.width=14, fig.height=5}
+
+df <- read.csv('C:/Users/benjamin.jung/Desktop/MFI_Exhausted_CD8_Tumor.csv', sep = ",", stringsAsFactors = FALSE)
+colnames(df) <- rename_columns(colnames(df))
+df_HM <- df
+df_HM[, setdiff(colnames(df_HM), c("file", "Treatment","file2"))] <- lapply(df_HM[,setdiff(colnames(df_HM), c("file", "Treatment","file2"))], convert_to_numeric)
+
+
+df_HM <- df_HM %>%
+  dplyr::select(-file) %>%                
+  tibble::column_to_rownames("file2")
+
+df_HM_t <- t(as.matrix(df_HM))
+
+annotation_treatment <- df_HM$`Treatment`[match(colnames(df_HM_t), df$`file2`)]
+annotation_tumor_evolution_fromJ7 <- df_HM$`Tumor_evolution_fromJ7`[match(colnames(df_HM_t), df$`file2`)]
+df_HM_t <- df_HM_t[!rownames(df_HM_t) %in% c("Treatment", 
+                                                   "Tumor_size",
+                                                   "Tumor_evolution_frommax",
+                                                   "Tumor_evolution_fromJ7",
+                                                   "Tumor_volume_J17",
+                                                   "Tumor_weight_J17"), ]
+
+matrix <- apply(df_HM_t, 2, function(x) as.numeric(x))
+rownames(matrix) <- rownames(df_HM_t)
+matrix_scaled <- t(scale(t(matrix)))  
+
+col_fun_tumor_evolution_J7 <- colorRamp2(c(min(annotation_tumor_evolution_fromJ7, na.rm = TRUE), 0, max(annotation_tumor_evolution_fromJ7, na.rm = TRUE)), 
+                                       
+                                        c("darkgreen", "white", "darkred"))
+
+
+top_annotation <- HeatmapAnnotation(
+  `Treatment` = factor(annotation_treatment),
+  `Tumor evolution from day 7 (log2FC)` = anno_barplot(
+    annotation_tumor_evolution_fromJ7, 
+    gp = gpar(fill = col_fun_tumor_evolution_J7(annotation_tumor_evolution_fromJ7), col = "black"),
+    height = unit(2, "cm") 
+  ),
+  col = list(`Treatment` = c("Bitherapy" = "#06AC8B", "Tritherapy" = "#675FAA")),
+  annotation_name_gp = gpar(fontface = "bold", fontsize = 12)
+)
+
+
+
+legend_tumor_evolution_J7 <- Legend(
+  title = "Tumor evolution from day 7 (log2FC)",
+  col_fun = col_fun_tumor_evolution_J7,
+  at = c(-2, -1, 0, 1, 2),  
+  labels = c("-2", "-1", "0", "1", "2"),
+  direction = "horizontal",
+  labels_gp = gpar(fontsize = 10)
+)
+
+
+
+markers_to_keep <- c("TIGIT.median", "TIM.3.median", "CD39.median", "CD226.median", "PDL1.median" )  # 
+filtered_matrix <- matrix_scaled[rownames(matrix_scaled) %in% markers_to_keep, ]
+rownames(filtered_matrix) <- gsub("\\.median", ".MFI", rownames(filtered_matrix))
+colors <- rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu"))
+colors.use <- colorRampPalette(colors)(100)
+
+
+heatmap1 <- Heatmap(
+  filtered_matrix, 
+  name = "zscore",
+  column_title = "Mice",
+  row_title = "Markers",
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  top_annotation = top_annotation,
+  row_names_gp = gpar(fontface = "bold", fontsize = 15),
+  column_split = factor(annotation_treatment, levels = c("Bitherapy", "Tritherapy")),
+  show_column_names = F,
+  col = colors.use,
+  heatmap_legend_param = list(
+    direction = "horizontal",
+    title_position = "topcenter" 
+  )
+)
+
+draw(heatmap1, 
+     heatmap_legend_side = "left", 
+     annotation_legend_side = "left", 
+     padding = unit(c(10, 10, 10, 10), "mm"), 
+     legend_gap = unit(1, "mm"),
+     annotation_legend_list = list(legend_tumor_evolution_J7)
+)
+
+
+svglite::svglite("C:/Users/benjamin.jung/Desktop/MFI_Exhausted_CD8_Tumor.svg",
+  width  = 1900/150,  # 13.333 in
+  height = 700/150    # 4.667 in
+)
+draw(
+heatmap1, 
+     heatmap_legend_side = "left", 
+     annotation_legend_side = "left", 
+     padding = unit(c(10, 10, 10, 10), "mm"), 
+     legend_gap = unit(1, "mm"),
+     annotation_legend_list = list(legend_tumor_evolution_J7)
+)
+dev.off()
+
+
+```
+
+
+---Code for the analysis of MFI from TILs in B16OVA tumor-bearing hTNFxhTNFR2 (Figure 4)---
+```{r clean and functions}
+rm(list = ls())
+
+# Fonction pour convertir proprement en numérique
+convert_to_numeric <- function(x) {
+  if (is.character(x)) {
+    x <- gsub(",", ".", x) # Remplacer les virgules par des points si nécessaire
+    x <- gsub(" ", "", x)  # Supprimer les espaces
+    x <- as.numeric(x)     # Convertir en numérique
+  }
+  return(x)
+}
+
+# Fonction pour extraire uniquement le nom du marqueur (dernier élément après "___")
+rename_columns <- function(col_names) {
+  sapply(col_names, function(x) {
+    if (grepl("___", x)) {
+      return(sub(".*___", "", x))  # Garde seulement ce qui est après "___"
+    } else {
+      return(x)  # Garde les autres colonnes inchangées
+    }
+  })
+}
+
+
+
+```
+
+This part of the code loads the MFI data of the CD4 regulatory cluster from the tumor the markers of interest (TIGIT, PD-1, TIM-3, TOX, FOXP3, CD226). The data are then scaled for each marker to generate and a heatmap is generated(Fig.4.e), treatment (Bitherapy, Tri certo or Tri inflix) and tumor evolution from 6 are shown as annotations.
+```{r Heatmap MFI CD4 regulatory cluster, fig.width=14, fig.height=5}
+
+df <- read.csv("C:/Users/benjamin.jung/Desktop/MFI_regulatory_CD4_Tumor_humanised.csv", sep = ",", stringsAsFactors = FALSE)
+colnames(df) <- rename_columns(colnames(df))
+df_HM <- df
+
+
+df_HM[, setdiff(colnames(df_HM), c("file", "Assigned_BOR", "Mouse_id", "OriginalFileName", "Tissue", "Upload.Folder","Treatment"))] <- lapply(df_HM[,setdiff(colnames(df_HM), c("file", "Assigned_BOR", "Mouse_id", "OriginalFileName", "Tissue", "Upload.Folder","Treatment"))], convert_to_numeric)
+
+df_HM <- df_HM %>%
+  dplyr::select(-file) %>%                
+  tibble::column_to_rownames("Mouse_id")
+
+df_HM_t <- t(as.matrix(df_HM))
+annotation_treatment <- df_HM$`Treatment`[match(colnames(df_HM_t), df$`Mouse_id`)]
+annotation_Log_Percentage_Change <- df_HM$`Log_Percentage_Change`[match(colnames(df_HM_t), df$`Mouse_id`)]
+df_HM_t <- df_HM_t[!rownames(df_HM_t) %in% c("Treatment", 
+                                                   "Tumor_size",
+                                                   "Tumor_evolution_frommax",
+                                                   "Log_Percentage_Change",
+                                                   "Tumor_volume_J17",
+                                                   "Tumor_weight_J17"), ]
+
+matrix <- apply(df_HM_t, 2, function(x) as.numeric(x))
+rownames(matrix) <- rownames(df_HM_t)
+matrix_scaled <- t(scale(t(matrix))) 
+col_fun_tumor_evolution_J7 <- colorRamp2(c(min(annotation_Log_Percentage_Change, na.rm = TRUE), 0, max(annotation_Log_Percentage_Change, na.rm = TRUE)), 
+                                       
+                                        c("darkgreen", "white", "darkred"))
+
+
+top_annotation <- HeatmapAnnotation(
+  `Treatment` = factor(annotation_treatment),
+  `Tumor evolution from day 7 (log2FC)` = anno_barplot(
+    annotation_Log_Percentage_Change, 
+    gp = gpar(fill = col_fun_tumor_evolution_J7(annotation_Log_Percentage_Change), col = "black"),
+       ylim = c(-3, 3),          
+    baseline = 0,       
+    height = unit(2, "cm") 
+  ),
+  col = list(`Treatment` = c("Bitherapy" = "#46b9ab", "Certolizumab" = "#5f4a95", "Infliximab" ="#4570b6")),
+  annotation_name_gp = gpar(fontface = "bold", fontsize = 12)
+)
+
+legend_tumor_evolution_J7 <- Legend(
+  title = "Tumor evolution from day 7 (log2FC)",
+  col_fun = col_fun_tumor_evolution_J7,
+  at = c(-2, -1, 0, 1, 2),  
+  labels = c("-2", "-1", "0", "1", "2"),
+  direction = "horizontal",
+  labels_gp = gpar(fontsize = 10)
+)
+
+markers_to_keep <- c("Tigit.median", "Foxp3.median", "CD39.median", "Tim3.median", "Pd1.median", "Tox.median", "Cd226.median" )
+filtered_matrix <- matrix_scaled[rownames(matrix_scaled) %in% markers_to_keep, ]
+rownames(filtered_matrix) <- gsub("\\.median", ".MFI", rownames(filtered_matrix))
+rdBu <- rev(brewer.pal(11, "RdBu"))
+
+
+col_fun <- colorRamp2(
+  breaks = seq(-2, 2, length.out = 11), 
+  colors = rdBu
+)
+
+
+heatmap1 <- Heatmap(
+  filtered_matrix, 
+  name = "zscore",
+  column_title = "Mice",
+  row_title = "Markers",
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  top_annotation = top_annotation,
+  row_names_gp = gpar(fontface = "bold", fontsize = 15),
+  column_split = factor(annotation_treatment, levels = c("Bitherapy", "Certolizumab" ,"Infliximab")),
+  show_column_names = F,
+  col = col_fun,
+  heatmap_legend_param = list(
+    direction = "horizontal",
+    title_position = "topcenter" 
+  )
+)
+
+
+draw(heatmap1, 
+     heatmap_legend_side = "left", 
+     annotation_legend_side = "left", 
+     padding = unit(c(10, 10, 10, 10), "mm"), 
+     legend_gap = unit(1, "mm"),
+     annotation_legend_list = list(legend_tumor_evolution_J7)
+)
+
+
+svglite::svglite("C:/Users/benjamin.jung/Desktop/MFI_regulatory_CD4_Tumor_humanised.svg",
+  width  = 2700/150,  # 13.333 in
+  height = 700/150    # 4.667 in
+)
+draw(
+heatmap1, 
+     heatmap_legend_side = "left", 
+     annotation_legend_side = "left", 
+     padding = unit(c(10, 10, 10, 10), "mm"), 
+     legend_gap = unit(1, "mm"),
+     annotation_legend_list = list(legend_tumor_evolution_J7)
+)
+dev.off()
+
+
+```
+
+This part of the code loads the MFI data of the CD8 exhausted cluster from the tumor the markers of interest (TIGIT, CD226, PD-1, CD39, TOX). The data are then scaled for each marker to generate and a heatmap is generated(Fig.4.e), treatment (Bitherapy, Tri certo or Tri inflix) and tumor evolution from 6 are shown as annotations.
+```{r Heatmap MFI CD8 exhausted cluster, fig.width=14, fig.height=5}
+
+df <- read.csv("C:/Users/benjamin.jung/Desktop/MFI_exhausted_CD8_Tumor_humanised.csv", sep = ",", stringsAsFactors = FALSE)
+# Appliquer la transformation aux noms de colonnes
+colnames(df) <- rename_columns(colnames(df))
+# Appliquer la conversion aux colonnes qui en ont besoin
+df_HM <- df
+
+
+df_HM[, setdiff(colnames(df_HM), c("file", "Assigned_BOR", "Mouse_id", "OriginalFileName", "Tissue", "Upload.Folder","Treatment"))] <- lapply(df_HM[,setdiff(colnames(df_HM), c("file", "Assigned_BOR", "Mouse_id", "OriginalFileName", "Tissue", "Upload.Folder","Treatment"))], convert_to_numeric)
+# Convertir en data frame et gérer les rownames
+
+str(df_HM)
+
+
+df_HM <- df_HM %>%
+  dplyr::select(-file) %>%                 # <- forcer le select de dplyr
+  tibble::column_to_rownames("Mouse_id")
+
+df_HM_t <- t(as.matrix(df_HM))
+
+# Extraire les annotations
+annotation_treatment <- df_HM$`Treatment`[match(colnames(df_HM_t), df$`Mouse_id`)]
+#annotation_tumor_evolution_frommax <- df_HM$`tumor_evolution_frommax`[match(colnames(df_HM_t), df$`Mouse_id`)]
+annotation_Log_Percentage_Change <- df_HM$`Log_Percentage_Change`[match(colnames(df_HM_t), df$`Mouse_id`)]
+#annotation_tumor_weight_J17 <- df_HM$`tumor_weight_J17`[match(colnames(df_HM_t), df$`Mouse_id`)]
+#annotation_tumor_volume_J17 <- df_HM$`Tumor_volume_J17`[match(colnames(df_HM_t), df$`Mouse_id`)]
+# Supprimer la ligne "Treatment" si elle existe après la transposition
+df_HM_t <- df_HM_t[!rownames(df_HM_t) %in% c("Treatment", 
+                                                   "Tumor_size",
+                                                   "Tumor_evolution_frommax",
+                                                   "Log_Percentage_Change",
+                                                   "Tumor_volume_J17",
+                                                   "Tumor_weight_J17"), ]
+# Convertir en matrice numérique et normaliser
+matrix <- apply(df_HM_t, 2, function(x) as.numeric(x))
+rownames(matrix) <- rownames(df_HM_t)
+matrix_scaled <- t(scale(t(matrix)))  # Normalisation par ligne
+
+col_fun_tumor_evolution_J7 <- colorRamp2(c(min(annotation_Log_Percentage_Change, na.rm = TRUE), 0, max(annotation_Log_Percentage_Change, na.rm = TRUE)), 
+                                       
+                                        c("darkgreen", "white", "darkred"))
+
+
+top_annotation <- HeatmapAnnotation(
+  `Treatment` = factor(annotation_treatment),
+  `Tumor evolution from day 7 (log2FC)` = anno_barplot(
+    annotation_Log_Percentage_Change, 
+    gp = gpar(fill = col_fun_tumor_evolution_J7(annotation_Log_Percentage_Change), col = "black"),
+       ylim = c(-3, 3),                # <-- force l’échelle Y
+    baseline = 0,       
+    height = unit(2, "cm")  # Augmente la hauteur du barplot
+  ),
+  col = list(`Treatment` = c("Bitherapy" = "#46b9ab", "Certolizumab" = "#5f4a95", "Infliximab" ="#4570b6")),
+  annotation_name_gp = gpar(fontface = "bold", fontsize = 12)
+)
+
+
+
+
+# Créer une légende personnalisée pour Tumor Evolution from J7
+legend_tumor_evolution_J7 <- Legend(
+  title = "Tumor evolution from day 7 (log2FC)",
+  col_fun = col_fun_tumor_evolution_J7,
+  at = c(-2, -1, 0, 1, 2),  # Valeurs numériques de ta légende
+  labels = c("-2", "-1", "0", "1", "2"),
+  direction = "horizontal",
+  labels_gp = gpar(fontsize = 10)
+)
+
+
+####
+
+# Liste des marqueurs que tu veux garder
+markers_to_keep <- c("Tox.median", "Pd1.median", "Tigit.median", "Cd39.median", "Cd226.median" )  # ajoute d'autres noms si besoin
+
+# Sélectionner uniquement les lignes dont le nom est dans la liste
+filtered_matrix <- matrix_scaled[rownames(matrix_scaled) %in% markers_to_keep, ]
+
+# Puis appliquer ta substitution sur les noms de lignes
+rownames(filtered_matrix) <- gsub("\\.median", ".MFI", rownames(filtered_matrix))
+
+
+
+rdBu <- rev(brewer.pal(11, "RdBu"))
+
+
+# On définit les breaks symétriques autour de 0
+col_fun <- colorRamp2(
+  breaks = seq(-2, 2, length.out = 11),  # -4, -3.2, ..., 4
+  colors = rdBu
+)
+
+
+
+
+
+#Générer le heatmap
+
+heatmap1 <- Heatmap(
+  filtered_matrix, 
+  name = "zscore",
+  column_title = "Mice",
+  row_title = "Markers",
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  top_annotation = top_annotation,
+  row_names_gp = gpar(fontface = "bold", fontsize = 15),
+  column_split = factor(annotation_treatment, levels = c("Bitherapy", "Certolizumab" ,"Infliximab")),
+  show_column_names = F,
+  col = col_fun,
+  heatmap_legend_param = list(
+    direction = "horizontal",
+    title_position = "topcenter"  # optionnel pour un meilleur rendu
+  )
+)
+
+
+
+# Sauvegarder en PDF 
+
+
+draw(heatmap1, 
+     heatmap_legend_side = "left", 
+     annotation_legend_side = "left", 
+     padding = unit(c(10, 10, 10, 10), "mm"), 
+     legend_gap = unit(1, "mm"),
+     annotation_legend_list = list(legend_tumor_evolution_J7)
+)
+
+
+svglite::svglite("C:/Users/benjamin.jung/Desktop/MFI_exhausted_CD8_Tumor_humanised.svg",
+  width  = 2700/150,  # 13.333 in
+  height = 700/150    # 4.667 in
+)
+draw(
+heatmap1, 
+     heatmap_legend_side = "left", 
+     annotation_legend_side = "left", 
+     padding = unit(c(10, 10, 10, 10), "mm"), 
+     legend_gap = unit(1, "mm"),
+     annotation_legend_list = list(legend_tumor_evolution_J7)
+)
+dev.off()
+
+
+```
+
+
+--- Buble plot for cluster identification (Extended data 5, 6, 7) ---
+
+The codes below are used to generate bubble plots for the characterization and identification of different CD4 and CD8 T-cell clusters in the tumor or TDLN for 3 different experiments. The size of each bubble represents the mean percentage of marker-positive cells within each cluster, while the color represents MFI.
+
+--Bubble plots bellow are for cytometry analysis of T cells from B16OVA tumor-bearing WT C57BL/6 mice treated with bitherapy or tritherapy--
+
+The bubble plot bellow is for CD4 TILs clusters (Extended data 5.e)
+```{r ID CLUSTERS CD4 Tumor MV, fig.width=10, fig.height=5}
+df <- read_csv("C:/Users/benjamin.jung/Desktop/for_buble_plot/buble_ID_CD4_Tumor_MV.csv")
+exclude_cols <- c("Tumor_evolution_fromJ7", "Tumor_volume_J17", "Tumor_weight_J17")
+
+
+df_numeric <- df %>%
+  select(where(is.numeric)) %>%
+  select(-any_of(exclude_cols))
+
+
+df_mean <- df_numeric %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+
+col_info <- tibble(original = colnames(df_mean)) %>%
+  mutate(
+    format_type = case_when(
+      str_detect(original, "___") ~ "mfi",
+      str_detect(original, "/") ~ "percent",
+      TRUE ~ "other"
+    ),
+    celltype = case_when(
+      format_type == "mfi" ~ str_extract(original, "^[^|]+"),
+      format_type == "percent" ~ str_extract(original, "^[^/]+"),
+      TRUE ~ NA_character_
+    ),
+    marker = case_when(
+      format_type == "mfi" ~ str_extract(original, "___([^|]+)") %>% str_remove("___"),
+      format_type == "percent" ~ str_extract(original, "/([^|]+)") %>% str_remove("/"),
+      TRUE ~ NA_character_
+    ),
+    stat = str_extract(original, "[^|]+$")
+  ) %>%
+  mutate(
+    marker = marker %>%
+      str_replace_all("\\+", "") %>%
+      str_replace_all("-", "") %>%
+      str_to_upper()
+  )
+
+
+df_long <- df_mean %>%
+  pivot_longer(cols = everything(), names_to = "original", values_to = "value") %>%
+  left_join(col_info, by = "original") %>%
+  filter(!is.na(celltype), !is.na(marker), format_type %in% c("mfi", "percent")) %>%
+  select(celltype, marker, format_type, value)
+
+
+df_wide <- df_long %>%
+  pivot_wider(
+    names_from = format_type,
+    values_from = value
+  ) %>%
+  filter(!is.na(mfi) & !is.na(percent))
+
+df_wide <- df_wide %>%
+  group_by(marker) %>%
+  mutate(
+    mfi_zscore = (mfi - mean(mfi, na.rm = TRUE)) / sd(mfi, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+
+mat_z <- df_wide %>%
+  select(celltype, marker, mfi_zscore) %>%
+  pivot_wider(names_from = marker, values_from = mfi_zscore) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+clust_rows <- hclust(dist(mat_z))$order
+ordered_celltypes <- rownames(mat_z)[clust_rows]
+
+clust_cols <- hclust(dist(t(mat_z)))$order
+ordered_markers <- colnames(mat_z)[clust_cols]
+
+df_wide <- df_wide %>%
+  mutate(
+    celltype = factor(celltype, levels = ordered_celltypes),
+    marker = factor(marker, levels = ordered_markers)
+  )
+
+
+selected_markers <- c("FOXP3",  "CD25", "CD127")
+df_wide <- df_wide %>%
+  filter(marker %in% selected_markers)
+
+
+bubble_plot <- ggplot(df_wide, aes(x = marker, y = celltype, size = percent, fill = mfi_zscore)) +
+  geom_point(shape = 21, color = "black", stroke = 1.2, alpha = 0.8) +
+  scale_size_continuous(
+    limits = c(0, 100),
+    range = c(0, 14),
+    name = "Percentage of expressing cells"
+  ) +
+  scale_fill_gradientn(
+    colors = c("#46b9ab", "white", "#5f4a95"),
+    name = "MFI (z-score per marker)",
+    limits = c(min(df_wide$mfi_zscore, na.rm = TRUE),
+               max(df_wide$mfi_zscore, na.rm = TRUE))
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, face = "bold", size = 14, colour = "black"),
+    axis.text.y  = element_text(face = "bold", size = 14, colour = "black"),
+    axis.title   = element_text(face = "bold", size = 16, colour = "black"),
+    axis.ticks   = element_line(size = 1.2, colour = "black"),
+    legend.title = element_text(face = "bold", size = 14, colour = "black"),
+    legend.text  = element_text(size = 12, colour = "black"),
+    plot.title   = element_text(face = "bold", size = 18, hjust = 0.5, colour = "black")
+  ) +
+  labs(
+    title = "Tumor CD4 clusters identification",
+    x = "Marker",
+    y = "Tumor CD4 Cluster"
+  )
+
+
+ggsave("buble_ID_CD4_Tumor_MV.svg", plot = bubble_plot, device = "svg", width = 9, height = 6, dpi = 300)
+
+
+
+bubble_plot
+
+```
+The bubble plot bellow is for CD8 TILs clusters (Extended data 5.g)
+```{r ID CLUSTERS CD8 Tumor MV, fig.width=12, fig.height=5}
+rm(list = ls())
+
+df <- read_csv("C:/Users/benjamin.jung/Desktop/for_buble_plot/buble_ID_CD8_Tumor_MV.csv")
+exclude_cols <- c("Tumor_evolution_fromJ7", "Tumor_volume_J17", "Tumor_weight_J17")
+
+
+df_numeric <- df %>%
+  select(where(is.numeric)) %>%
+  select(-any_of(exclude_cols))
+
+
+df_mean <- df_numeric %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+
+col_info <- tibble(original = colnames(df_mean)) %>%
+  mutate(
+    format_type = case_when(
+      str_detect(original, "___") ~ "mfi",
+      str_detect(original, "/") ~ "percent",
+      TRUE ~ "other"
+    ),
+    celltype = case_when(
+      format_type == "mfi" ~ str_extract(original, "^[^|]+"),
+      format_type == "percent" ~ str_extract(original, "^[^/]+"),
+      TRUE ~ NA_character_
+    ),
+    marker = case_when(
+      format_type == "mfi" ~ str_extract(original, "___([^|]+)") %>% str_remove("___"),
+      format_type == "percent" ~ str_extract(original, "/([^|]+)") %>% str_remove("/"),
+      TRUE ~ NA_character_
+    ),
+    stat = str_extract(original, "[^|]+$")
+  ) %>%
+  mutate(
+    marker = marker %>%
+      str_replace_all("\\+", "") %>%
+      str_replace_all("-", "") %>%
+      str_to_upper()
+  )
+
+
+df_long <- df_mean %>%
+  pivot_longer(cols = everything(), names_to = "original", values_to = "value") %>%
+  left_join(col_info, by = "original") %>%
+  filter(!is.na(celltype), !is.na(marker), format_type %in% c("mfi", "percent")) %>%
+  select(celltype, marker, format_type, value)
+
+
+df_wide <- df_long %>%
+  pivot_wider(
+    names_from = format_type,
+    values_from = value
+  ) %>%
+  filter(!is.na(mfi) & !is.na(percent))
+
+
+df_wide <- df_wide %>%
+  group_by(marker) %>%
+  mutate(
+    mfi_zscore = (mfi - mean(mfi, na.rm = TRUE)) / sd(mfi, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+
+mat_z <- df_wide %>%
+  select(celltype, marker, mfi_zscore) %>%
+  pivot_wider(names_from = marker, values_from = mfi_zscore) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+clust_rows <- hclust(dist(mat_z))$order
+ordered_celltypes <- rownames(mat_z)[clust_rows]
+
+clust_cols <- hclust(dist(t(mat_z)))$order
+ordered_markers <- colnames(mat_z)[clust_cols]
+
+df_wide <- df_wide %>%
+  mutate(
+    celltype = factor(celltype, levels = ordered_celltypes),
+    marker = factor(marker, levels = ordered_markers)
+  )
+
+
+selected_markers <- c("CD44", "CD62L", "PD1", "LAG3", "TIM3", "FOXP3", "SLAMF6", "TIGIT", "CD127", "CD39")
+df_wide <- df_wide %>%
+  filter(marker %in% selected_markers)
+
+
+bubble_plot <-ggplot(df_wide, aes(x = marker, y = celltype, size = percent, fill = mfi_zscore)) +
+  geom_point(shape = 21, color = "black", stroke = 1.2, alpha = 0.8) +
+  scale_size_continuous(
+    limits = c(0, 100),
+    range = c(0, 14),
+    name = "Percentage of expressing cells"
+  ) +
+  scale_fill_gradientn(
+    colors = c("#46b9ab", "white", "#5f4a95"),
+    name = "MFI (z-score per marker)",
+    limits = c(min(df_wide$mfi_zscore, na.rm = TRUE),
+               max(df_wide$mfi_zscore, na.rm = TRUE))
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, face = "bold", size = 14, colour = "black"),
+    axis.text.y  = element_text(face = "bold", size = 14, colour = "black"),
+    axis.title   = element_text(face = "bold", size = 16, colour = "black"),
+    axis.ticks   = element_line(size = 1.2, colour = "black"),
+    legend.title = element_text(face = "bold", size = 14, colour = "black"),
+    legend.text  = element_text(size = 12, colour = "black"),
+    plot.title   = element_text(face = "bold", size = 18, hjust = 0.5, colour = "black")
+  ) +
+  labs(
+    title = "Tumor CD8 clusters identification",
+    x = "Marker",
+    y = "Tumor CD8 Cluster"
+  )
+
+
+ggsave("buble_ID_CD8_Tumor_MV.svg", plot = bubble_plot, device = "svg", width = 13, height = 6, dpi = 300)
+
+
+bubble_plot
+
+```
+The bubble plot bellow is for CD4 TDLN clusters (Extended data 5.k)
+```{r ID CLUSTERS CD4 TDLN MV, fig.width=10, fig.height=5}
+df <- read_csv("C:/Users/benjamin.jung/Desktop/for_buble_plot/buble_ID_CD4_TDLN_MV.csv")
+
+exclude_cols <- c("Tumor_evolution_fromJ7", "Tumor_volume_J17", "Tumor_weight_J17")
+
+df_numeric <- df %>%
+  select(where(is.numeric)) %>%
+  select(-any_of(exclude_cols))
+
+df_mean <- df_numeric %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+col_info <- tibble(original = colnames(df_mean)) %>%
+  mutate(
+    format_type = case_when(
+      str_detect(original, "___") ~ "mfi",
+      str_detect(original, "/") ~ "percent",
+      TRUE ~ "other"
+    ),
+    celltype = case_when(
+      format_type == "mfi" ~ str_extract(original, "^[^|]+"),
+      format_type == "percent" ~ str_extract(original, "^[^/]+"),
+      TRUE ~ NA_character_
+    ),
+    marker = case_when(
+      format_type == "mfi" ~ str_extract(original, "___([^|]+)") %>% str_remove("___"),
+      format_type == "percent" ~ str_extract(original, "/([^|]+)") %>% str_remove("/"),
+      TRUE ~ NA_character_
+    ),
+    stat = str_extract(original, "[^|]+$")
+  ) %>%
+  mutate(
+    marker = marker %>%
+      str_replace_all("\\+", "") %>%
+      str_replace_all("-", "") %>%
+      str_to_upper()
+  )
+
+
+df_long <- df_mean %>%
+  pivot_longer(cols = everything(), names_to = "original", values_to = "value") %>%
+  left_join(col_info, by = "original") %>%
+  filter(!is.na(celltype), !is.na(marker), format_type %in% c("mfi", "percent")) %>%
+  select(celltype, marker, format_type, value)
+
+
+df_wide <- df_long %>%
+  pivot_wider(
+    names_from = format_type,
+    values_from = value
+  ) %>%
+  filter(!is.na(mfi) & !is.na(percent))
+
+df_wide <- df_wide %>%
+  group_by(marker) %>%
+  mutate(
+    mfi_zscore = (mfi - mean(mfi, na.rm = TRUE)) / sd(mfi, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+
+mat_z <- df_wide %>%
+  select(celltype, marker, mfi_zscore) %>%
+  pivot_wider(names_from = marker, values_from = mfi_zscore) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+clust_rows <- hclust(dist(mat_z))$order
+ordered_celltypes <- rownames(mat_z)[clust_rows]
+
+clust_cols <- hclust(dist(t(mat_z)))$order
+ordered_markers <- colnames(mat_z)[clust_cols]
+
+df_wide <- df_wide %>%
+  mutate(
+    celltype = factor(celltype, levels = ordered_celltypes),
+    marker = factor(marker, levels = ordered_markers)
+  )
+
+selected_markers <- c("CD44", "PD1", "FOXP3", "SLAMF6", "CD127", "CD39", "KI67", "CD62L", "CD25" )
+df_wide <- df_wide %>%
+  filter(marker %in% selected_markers)
+
+
+bubble_plot <- ggplot(df_wide, aes(x = marker, y = celltype, size = percent, fill = mfi_zscore)) +
+  geom_point(shape = 21, color = "black", stroke = 1.2, alpha = 0.8) +
+  scale_size_continuous(
+    limits = c(0, 100),
+    range = c(0, 14),
+    name = "Percentage of expressing cells"
+  ) +
+  scale_fill_gradientn(
+    colors = c("#46b9ab", "white", "#5f4a95"),
+    name = "MFI (z-score per marker)",
+    limits = c(min(df_wide$mfi_zscore, na.rm = TRUE),
+               max(df_wide$mfi_zscore, na.rm = TRUE))
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, face = "bold", size = 14, colour = "black"),
+    axis.text.y  = element_text(face = "bold", size = 14, colour = "black"),
+    axis.title   = element_text(face = "bold", size = 16, colour = "black"),
+    axis.ticks   = element_line(size = 1.2, colour = "black"),
+    legend.title = element_text(face = "bold", size = 14, colour = "black"),
+    legend.text  = element_text(size = 12, colour = "black"),
+    plot.title   = element_text(face = "bold", size = 18, hjust = 0.5, colour = "black")
+  ) +
+  labs(
+    title = "TDLN CD4 clusters identification",
+    x = "Marker",
+    y = "TDLN CD4 Cluster"
+  )
+
+
+
+ggsave("buble_ID_CD4_TDLN_MV.svg", plot = bubble_plot, device = "svg", width = 9.5, height = 6, dpi = 300)
+
+
+bubble_plot
+
+
+```
+The bubble plot bellow is for CD8 TDLN clusters (Extended data 5.i)
+```{r ID CLUSTERS CD8 TDLN MV, fig.width=12, fig.height=5}
+
+df <- read_csv("C:/Users/benjamin.jung/Desktop/for_buble_plot/buble_ID_CD8_TDLN_MV.csv")
+exclude_cols <- c("Tumor_evolution_fromJ7", "Tumor_volume_J17", "Tumor_weight_J17")
+df_numeric <- df %>%
+  select(where(is.numeric)) %>%
+  select(-any_of(exclude_cols))
+
+df_mean <- df_numeric %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+col_info <- tibble(original = colnames(df_mean)) %>%
+  mutate(
+    format_type = case_when(
+      str_detect(original, "___") ~ "mfi",
+      str_detect(original, "/") ~ "percent",
+      TRUE ~ "other"
+    ),
+    celltype = case_when(
+      format_type == "mfi" ~ str_extract(original, "^[^|]+"),
+      format_type == "percent" ~ str_extract(original, "^[^/]+"),
+      TRUE ~ NA_character_
+    ),
+    marker = case_when(
+      format_type == "mfi" ~ str_extract(original, "___([^|]+)") %>% str_remove("___"),
+      format_type == "percent" ~ str_extract(original, "/([^|]+)") %>% str_remove("/"),
+      TRUE ~ NA_character_
+    ),
+    stat = str_extract(original, "[^|]+$")
+  ) %>%
+  mutate(
+    marker = marker %>%
+      str_replace_all("\\+", "") %>%
+      str_replace_all("-", "") %>%
+      str_to_upper()
+  )
+
+df_long <- df_mean %>%
+  pivot_longer(cols = everything(), names_to = "original", values_to = "value") %>%
+  left_join(col_info, by = "original") %>%
+  filter(!is.na(celltype), !is.na(marker), format_type %in% c("mfi", "percent")) %>%
+  select(celltype, marker, format_type, value)
+
+df_wide <- df_long %>%
+  pivot_wider(
+    names_from = format_type,
+    values_from = value
+  ) %>%
+  filter(!is.na(mfi) & !is.na(percent))
+
+df_wide <- df_wide %>%
+  group_by(marker) %>%
+  mutate(
+    mfi_zscore = (mfi - mean(mfi, na.rm = TRUE)) / sd(mfi, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+
+mat_z <- df_wide %>%
+  select(celltype, marker, mfi_zscore) %>%
+  pivot_wider(names_from = marker, values_from = mfi_zscore) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+clust_rows <- hclust(dist(mat_z))$order
+ordered_celltypes <- rownames(mat_z)[clust_rows]
+
+clust_cols <- hclust(dist(t(mat_z)))$order
+ordered_markers <- colnames(mat_z)[clust_cols]
+
+df_wide <- df_wide %>%
+  mutate(
+    celltype = factor(celltype, levels = ordered_celltypes),
+    marker = factor(marker, levels = ordered_markers)
+  )
+
+
+selected_markers <- c("CD44", "PD1", "FOXP3", "SLAMF6", "CD127", "CD39", "KI67", "CD62L", "CD25" )
+df_wide <- df_wide %>%
+  filter(marker %in% selected_markers)
+
+
+bubble_plot <-ggplot(df_wide, aes(x = marker, y = celltype, size = percent, fill = mfi_zscore)) +
+  geom_point(shape = 21, color = "black", stroke = 1.2, alpha = 0.8) +
+  scale_size_continuous(
+    limits = c(0, 100),
+    range = c(0, 14),
+    name = "Percentage of expressing cells"
+  ) +
+  scale_fill_gradientn(
+    colors = c("#46b9ab", "white", "#5f4a95"),
+    name = "MFI (z-score per marker)",
+    limits = c(min(df_wide$mfi_zscore, na.rm = TRUE),
+               max(df_wide$mfi_zscore, na.rm = TRUE))
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, face = "bold", size = 14, colour = "black"),
+    axis.text.y  = element_text(face = "bold", size = 14, colour = "black"),
+    axis.title   = element_text(face = "bold", size = 16, colour = "black"),
+    axis.ticks   = element_line(size = 1.2, colour = "black"),
+    legend.title = element_text(face = "bold", size = 14, colour = "black"),
+    legend.text  = element_text(size = 12, colour = "black"),
+    plot.title   = element_text(face = "bold", size = 18, hjust = 0.5, colour = "black")
+  ) +
+  labs(
+    title = "TDLN CD8 clusters identification",
+    x = "Marker",
+    y = "TDLN CD8 Cluster"
+  )
+
+
+ggsave("buble_ID_CD8_TDLN_MV.svg", plot = bubble_plot, device = "svg", width = 9.5, height = 6, dpi = 300)
+
+
+bubble_plot
+
+
+```
+
+--Bubble plots for cytometry analysis of T cells from B16OVA tumor-bearing hTNFxhTNFR2 mice treated with bitherapy or tri certo or tri inflix--
+
+The bubble plot bellow is for CD4 TILs clusters (Extended data 6.d)
+```{r ID CLUSTER CD4 Tumor TMP humanised, fig.width=10, fig.height=5}
+
+df <- read_csv("C:/Users/benjamin.jung/Desktop/for_buble_plot/buble_ID_CD4_Tumor_TMP_humanised.csv")
+exclude_cols <- c("Tumor_evolution_fromJ7", "Tumor_volume_J17", "Tumor_weight_J17")
+
+df_numeric <- df %>%
+  select(where(is.numeric)) %>%
+  select(-any_of(exclude_cols))
+
+df_mean <- df_numeric %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+col_info <- tibble(original = colnames(df_mean)) %>%
+  mutate(
+    format_type = case_when(
+      str_detect(original, "___") ~ "mfi",
+      str_detect(original, "/") ~ "percent",
+      TRUE ~ "other"
+    ),
+    celltype = case_when(
+      format_type == "mfi" ~ str_extract(original, "^[^|]+"),
+      format_type == "percent" ~ str_extract(original, "^[^/]+"),
+      TRUE ~ NA_character_
+    ),
+    marker = case_when(
+      format_type == "mfi" ~ str_extract(original, "___([^|]+)") %>% str_remove("___"),
+      format_type == "percent" ~ str_extract(original, "/([^|]+)") %>% str_remove("/"),
+      TRUE ~ NA_character_
+    ),
+    stat = str_extract(original, "[^|]+$")
+  ) %>%
+  mutate(
+    marker = marker %>%
+      str_replace_all("\\+", "") %>%
+      str_replace_all("-", "") %>%
+      str_to_upper()
+  )
+
+
+df_long <- df_mean %>%
+  pivot_longer(cols = everything(), names_to = "original", values_to = "value") %>%
+  left_join(col_info, by = "original") %>%
+  filter(!is.na(celltype), !is.na(marker), format_type %in% c("mfi", "percent")) %>%
+  select(celltype, marker, format_type, value)
+
+
+df_wide <- df_long %>%
+  pivot_wider(
+    names_from = format_type,
+    values_from = value
+  ) %>%
+  filter(!is.na(mfi) & !is.na(percent))
+
+df_wide <- df_wide %>%
+  group_by(marker) %>%
+  mutate(
+    mfi_zscore = (mfi - mean(mfi, na.rm = TRUE)) / sd(mfi, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+mat_z <- df_wide %>%
+  select(celltype, marker, mfi_zscore) %>%
+  pivot_wider(names_from = marker, values_from = mfi_zscore) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+clust_rows <- hclust(dist(mat_z))$order
+ordered_celltypes <- rownames(mat_z)[clust_rows]
+
+clust_cols <- hclust(dist(t(mat_z)))$order
+ordered_markers <- colnames(mat_z)[clust_cols]
+
+df_wide <- df_wide %>%
+  mutate(
+    celltype = factor(celltype, levels = ordered_celltypes),
+    marker = factor(marker, levels = ordered_markers)
+  )
+
+
+selected_markers <- c("FOXP3",  "CD25", "CD127", "CD44", "PD1","KI67", "CD62L")
+df_wide <- df_wide %>%
+  filter(marker %in% selected_markers)
+
+
+bubble_plot <- ggplot(df_wide, aes(x = marker, y = celltype, size = percent, fill = mfi_zscore)) +
+  geom_point(shape = 21, color = "black", stroke = 1.2, alpha = 0.8) +
+  scale_size_continuous(
+    limits = c(0, 100),
+    range = c(0, 14),
+    name = "Percentage of expressing cells"
+  ) +
+  scale_fill_gradientn(
+    colors = c("#46b9ab", "white", "#5f4a95"),
+    name = "MFI (z-score per marker)",
+    limits = c(min(df_wide$mfi_zscore, na.rm = TRUE),
+               max(df_wide$mfi_zscore, na.rm = TRUE))
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, face = "bold", size = 14, colour = "black"),
+    axis.text.y  = element_text(face = "bold", size = 14, colour = "black"),
+    axis.title   = element_text(face = "bold", size = 16, colour = "black"),
+    axis.ticks   = element_line(size = 1.2, colour = "black"),
+    legend.title = element_text(face = "bold", size = 14, colour = "black"),
+    legend.text  = element_text(size = 12, colour = "black"),
+    plot.title   = element_text(face = "bold", size = 18, hjust = 0.5, colour = "black")
+  ) +
+  labs(
+    title = "Tumor CD4 clusters identification",
+    x = "Marker",
+    y = "Tumor CD4 Cluster"
+  )
+
+
+ggsave("buble_ID_CD4_Tumor_TMP_humanised.svg", plot = bubble_plot, device = "svg", width = 13, height = 6, dpi = 300)
+
+
+bubble_plot
+
+```
+The bubble plot bellow is for CD8 TILs clusters (Extended data 6.e)
+```{r ID CLUSTER CD8 Tumor TMP humanised, fig.width=12, fig.height=5}
+
+df <- read_csv("C:/Users/benjamin.jung/Desktop/for_buble_plot/buble_ID_CD8_Tumor_TMP_humanised.csv")
+
+exclude_cols <- c("Tumor_evolution_fromJ7", "Tumor_volume_J17", "Tumor_weight_J17")
+
+
+df_numeric <- df %>%
+  select(where(is.numeric)) %>%
+  select(-any_of(exclude_cols))
+
+
+df_mean <- df_numeric %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+
+col_info <- tibble(original = colnames(df_mean)) %>%
+  mutate(
+    format_type = case_when(
+      str_detect(original, "___") ~ "mfi",
+      str_detect(original, "/") ~ "percent",
+      TRUE ~ "other"
+    ),
+    celltype = case_when(
+      format_type == "mfi" ~ str_extract(original, "^[^|]+"),
+      format_type == "percent" ~ str_extract(original, "^[^/]+"),
+      TRUE ~ NA_character_
+    ),
+    marker = case_when(
+      format_type == "mfi" ~ str_extract(original, "___([^|]+)") %>% str_remove("___"),
+      format_type == "percent" ~ str_extract(original, "/([^|]+)") %>% str_remove("/"),
+      TRUE ~ NA_character_
+    ),
+    stat = str_extract(original, "[^|]+$")
+  ) %>%
+  mutate(
+    marker = marker %>%
+      str_replace_all("\\+", "") %>%
+      str_replace_all("-", "") %>%
+      str_to_upper()
+  )
+
+
+df_long <- df_mean %>%
+  pivot_longer(cols = everything(), names_to = "original", values_to = "value") %>%
+  left_join(col_info, by = "original") %>%
+  filter(!is.na(celltype), !is.na(marker), format_type %in% c("mfi", "percent")) %>%
+  select(celltype, marker, format_type, value)
+
+df_wide <- df_long %>%
+  pivot_wider(
+    names_from = format_type,
+    values_from = value
+  ) %>%
+  filter(!is.na(mfi) & !is.na(percent))
+
+
+df_wide <- df_wide %>%
+  group_by(marker) %>%
+  mutate(
+    mfi_zscore = (mfi - mean(mfi, na.rm = TRUE)) / sd(mfi, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+
+mat_z <- df_wide %>%
+  select(celltype, marker, mfi_zscore) %>%
+  pivot_wider(names_from = marker, values_from = mfi_zscore) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+clust_rows <- hclust(dist(mat_z))$order
+ordered_celltypes <- rownames(mat_z)[clust_rows]
+
+clust_cols <- hclust(dist(t(mat_z)))$order
+ordered_markers <- colnames(mat_z)[clust_cols]
+
+df_wide <- df_wide %>%
+  mutate(
+    celltype = factor(celltype, levels = ordered_celltypes),
+    marker = factor(marker, levels = ordered_markers)
+  )
+
+
+selected_markers <- c("CD44", "CD62L", "PD1", "LAG3", "TIM3", "FOXP3", "Slamf6", "TIGIT", "CD127", "CD39", "TOX", "KI67", "CD226")
+df_wide <- df_wide %>%
+  filter(marker %in% selected_markers)
+
+
+bubble_plot <- ggplot(df_wide, aes(x = marker, y = celltype, size = percent, fill = mfi_zscore)) +
+  geom_point(shape = 21, color = "black", stroke = 1.2, alpha = 0.8) +
+  scale_size_continuous(
+    limits = c(0, 100),
+    range = c(0, 14),
+    name = "Percentage of expressing cells"
+  ) +
+  scale_fill_gradientn(
+    colors = c("#46b9ab", "white", "#5f4a95"),
+    name = "MFI (z-score per marker)",
+    limits = c(min(df_wide$mfi_zscore, na.rm = TRUE),
+               max(df_wide$mfi_zscore, na.rm = TRUE))
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, face = "bold", size = 14, colour = "black"),
+    axis.text.y  = element_text(face = "bold", size = 14, colour = "black"),
+    axis.title   = element_text(face = "bold", size = 16, colour = "black"),
+    axis.ticks   = element_line(size = 1.2, colour = "black"),
+    legend.title = element_text(face = "bold", size = 14, colour = "black"),
+    legend.text  = element_text(size = 12, colour = "black"),
+    plot.title   = element_text(face = "bold", size = 18, hjust = 0.5, colour = "black")
+  ) +
+  labs(
+    title = "Tumor CD8 clusters identification",
+    x = "Marker",
+    y = "Tumor CD8 Cluster"
+  )
+
+
+
+
+ggsave("buble_ID_CD8_Tumor_TMP_humanised.svg", plot = bubble_plot, device = "svg", width = 13, height = 6, dpi = 300)
+
+
+bubble_plot
+
+
+
+```
+The bubble plot bellow is for CD4 TDLN clusters (Extended data 6.m)
+```{r ID CLUSTER CD4 TDLN TMP humanised, fig.width=10, fig.height=5}
+
+df <- read_csv("C:/Users/benjamin.jung/Desktop/for_buble_plot/buble_ID_CD4_TDLN_TMP_humanised.csv")
+exclude_cols <- c("Tumor_evolution_fromJ7", "Tumor_volume_J17", "Tumor_weight_J17")
+
+
+df_numeric <- df %>%
+  select(where(is.numeric)) %>%
+  select(-any_of(exclude_cols))
+
+df_mean <- df_numeric %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+col_info <- tibble(original = colnames(df_mean)) %>%
+  mutate(
+    format_type = case_when(
+      str_detect(original, "___") ~ "mfi",
+      str_detect(original, "/") ~ "percent",
+      TRUE ~ "other"
+    ),
+    celltype = case_when(
+      format_type == "mfi" ~ str_extract(original, "^[^|]+"),
+      format_type == "percent" ~ str_extract(original, "^[^/]+"),
+      TRUE ~ NA_character_
+    ),
+    marker = case_when(
+      format_type == "mfi" ~ str_extract(original, "___([^|]+)") %>% str_remove("___"),
+      format_type == "percent" ~ str_extract(original, "/([^|]+)") %>% str_remove("/"),
+      TRUE ~ NA_character_
+    ),
+    stat = str_extract(original, "[^|]+$")
+  ) %>%
+  mutate(
+    marker = marker %>%
+      str_replace_all("\\+", "") %>%
+      str_replace_all("-", "") %>%
+      str_to_upper()
+  )
+
+
+df_long <- df_mean %>%
+  pivot_longer(cols = everything(), names_to = "original", values_to = "value") %>%
+  left_join(col_info, by = "original") %>%
+  filter(!is.na(celltype), !is.na(marker), format_type %in% c("mfi", "percent")) %>%
+  select(celltype, marker, format_type, value)
+
+
+df_wide <- df_long %>%
+  pivot_wider(
+    names_from = format_type,
+    values_from = value
+  ) %>%
+  filter(!is.na(mfi) & !is.na(percent))
+
+df_wide <- df_wide %>%
+  group_by(marker) %>%
+  mutate(
+    mfi_zscore = (mfi - mean(mfi, na.rm = TRUE)) / sd(mfi, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+mat_z <- df_wide %>%
+  select(celltype, marker, mfi_zscore) %>%
+  pivot_wider(names_from = marker, values_from = mfi_zscore) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+clust_rows <- hclust(dist(mat_z))$order
+ordered_celltypes <- rownames(mat_z)[clust_rows]
+
+clust_cols <- hclust(dist(t(mat_z)))$order
+ordered_markers <- colnames(mat_z)[clust_cols]
+
+df_wide <- df_wide %>%
+  mutate(
+    celltype = factor(celltype, levels = ordered_celltypes),
+    marker = factor(marker, levels = ordered_markers)
+  )
+
+
+selected_markers <- c("CD44", "PD1", "FOXP3", "SLAMF6", "CD127", "CD39", "KI67", "CD62L", "CD25" )
+df_wide <- df_wide %>%
+  filter(marker %in% selected_markers)
+
+
+bubble_plot <-ggplot(df_wide, aes(x = marker, y = celltype, size = percent, fill = mfi_zscore)) +
+  geom_point(shape = 21, color = "black", stroke = 1.2, alpha = 0.8) +
+  scale_size_continuous(
+    limits = c(0, 100),
+    range = c(0, 14),
+    name = "Percentage of expressing cells"
+  ) +
+  scale_fill_gradientn(
+    colors = c("#46b9ab", "white", "#5f4a95"),
+    name = "MFI (z-score per marker)",
+    limits = c(min(df_wide$mfi_zscore, na.rm = TRUE),
+               max(df_wide$mfi_zscore, na.rm = TRUE))
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, face = "bold", size = 14, colour = "black"),
+    axis.text.y  = element_text(face = "bold", size = 14, colour = "black"),
+    axis.title   = element_text(face = "bold", size = 16, colour = "black"),
+    axis.ticks   = element_line(size = 1.2, colour = "black"),
+    legend.title = element_text(face = "bold", size = 14, colour = "black"),
+    legend.text  = element_text(size = 12, colour = "black"),
+    plot.title   = element_text(face = "bold", size = 18, hjust = 0.5, colour = "black")
+  ) +
+  labs(
+    title = "TDLN CD4 clusters identification",
+    x = "Marker",
+    y = "TDLN CD4 Cluster"
+  )
+
+
+
+ggsave("buble_ID_CD4_TDLN_TMP_humanised.svg", plot = bubble_plot, device = "svg", width = 13, height = 6, dpi = 300)
+
+
+bubble_plot
+
+
+```
+The bubble plot bellow is for CD8 TDLN clusters (Extended data 6.j)
+```{r ID CLUSTER CD8 TDLN TMP humanised, fig.width=12, fig.height=5}
+
+df <- read_csv("C:/Users/benjamin.jung/Desktop/for_buble_plot/buble_ID_CD8_TDLN_TMP_humanised.csv")
+exclude_cols <- c("Tumor_evolution_fromJ7", "Tumor_volume_J17", "Tumor_weight_J17")
+
+
+df_numeric <- df %>%
+  select(where(is.numeric)) %>%
+  select(-any_of(exclude_cols))
+
+
+df_mean <- df_numeric %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+col_info <- tibble(original = colnames(df_mean)) %>%
+  mutate(
+    format_type = case_when(
+      str_detect(original, "___") ~ "mfi",
+      str_detect(original, "/") ~ "percent",
+      TRUE ~ "other"
+    ),
+    celltype = case_when(
+      format_type == "mfi" ~ str_extract(original, "^[^|]+"),
+      format_type == "percent" ~ str_extract(original, "^[^/]+"),
+      TRUE ~ NA_character_
+    ),
+    marker = case_when(
+      format_type == "mfi" ~ str_extract(original, "___([^|]+)") %>% str_remove("___"),
+      format_type == "percent" ~ str_extract(original, "/([^|]+)") %>% str_remove("/"),
+      TRUE ~ NA_character_
+    ),
+    stat = str_extract(original, "[^|]+$")
+  ) %>%
+  mutate(
+    marker = marker %>%
+      str_replace_all("\\+", "") %>%
+      str_replace_all("-", "") %>%
+      str_to_upper()
+  )
+
+
+df_long <- df_mean %>%
+  pivot_longer(cols = everything(), names_to = "original", values_to = "value") %>%
+  left_join(col_info, by = "original") %>%
+  filter(!is.na(celltype), !is.na(marker), format_type %in% c("mfi", "percent")) %>%
+  select(celltype, marker, format_type, value)
+
+
+df_wide <- df_long %>%
+  pivot_wider(
+    names_from = format_type,
+    values_from = value
+  ) %>%
+  filter(!is.na(mfi) & !is.na(percent))
+
+
+df_wide <- df_wide %>%
+  group_by(marker) %>%
+  mutate(
+    mfi_zscore = (mfi - mean(mfi, na.rm = TRUE)) / sd(mfi, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+
+mat_z <- df_wide %>%
+  select(celltype, marker, mfi_zscore) %>%
+  pivot_wider(names_from = marker, values_from = mfi_zscore) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+clust_rows <- hclust(dist(mat_z))$order
+ordered_celltypes <- rownames(mat_z)[clust_rows]
+
+clust_cols <- hclust(dist(t(mat_z)))$order
+ordered_markers <- colnames(mat_z)[clust_cols]
+
+df_wide <- df_wide %>%
+  mutate(
+    celltype = factor(celltype, levels = ordered_celltypes),
+    marker = factor(marker, levels = ordered_markers)
+  )
+
+
+selected_markers <- c("CD44", "PD1", "FOXP3", "SLAMF6", "CD127", "CD39", "KI67", "CD62L", "CD25" )
+df_wide <- df_wide %>%
+  filter(marker %in% selected_markers)
+
+
+bubble_plot <- ggplot(df_wide, aes(x = marker, y = celltype, size = percent, fill = mfi_zscore)) +
+  geom_point(shape = 21, color = "black", stroke = 1.2, alpha = 0.8) +
+  scale_size_continuous(
+    limits = c(0, 100),
+    range = c(0, 14),
+    name = "Percentage of expressing cells"
+  ) +
+  scale_fill_gradientn(
+    colors = c("#46b9ab", "white", "#5f4a95"),
+    name = "MFI (z-score per marker)",
+    limits = c(min(df_wide$mfi_zscore, na.rm = TRUE),
+               max(df_wide$mfi_zscore, na.rm = TRUE))
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, face = "bold", size = 14, colour = "black"),
+    axis.text.y  = element_text(face = "bold", size = 14, colour = "black"),
+    axis.title   = element_text(face = "bold", size = 16, colour = "black"),
+    axis.ticks   = element_line(size = 1.2, colour = "black"),
+    legend.title = element_text(face = "bold", size = 14, colour = "black"),
+    legend.text  = element_text(size = 12, colour = "black"),
+    plot.title   = element_text(face = "bold", size = 18, hjust = 0.5, colour = "black")
+  ) +
+  labs(
+    title = "TDLN CD8 clusters identification",
+    x = "Marker",
+    y = "TDLN CD8 Cluster"
+  )
+
+
+
+
+
+ggsave("buble_ID_CD8_TDLN_TMP_humanised.svg", plot = bubble_plot, device = "svg", width = 13, height = 6, dpi = 300)
+
+
+bubble_plot
+
+
+```
+
+
+--Bubble plots for cytometry analysis of T cells from B16OVA tumor-bearing hTNFxhTNFR2 mice treated with Bitherapy or Tri hinflix or Tri minflix IgG1 or Tri minflix IgG2a --
+
+The bubble plot bellow is for CD4 TILs clusters (Extended data 7.a)
+```{r ID CLUSTER CD4 Tumor TMP infliximabs, fig.width=10, fig.height=5}
+
+
+df <- read_csv("C:/Users/benjamin.jung/Desktop/for_buble_plot/buble_ID_CD4_Tumor_TMP_infliximabs.csv")
+exclude_cols <- c("Tumor_evolution_fromJ7", "Tumor_volume_J17", "Tumor_weight_J17")
+
+
+df_numeric <- df %>%
+  select(where(is.numeric)) %>%
+  select(-any_of(exclude_cols))
+
+
+df_mean <- df_numeric %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+
+col_info <- tibble(original = colnames(df_mean)) %>%
+  mutate(
+    format_type = case_when(
+      str_detect(original, "___") ~ "mfi",
+      str_detect(original, "/") ~ "percent",
+      TRUE ~ "other"
+    ),
+    celltype = case_when(
+      format_type == "mfi" ~ str_extract(original, "^[^|]+"),
+      format_type == "percent" ~ str_extract(original, "^[^/]+"),
+      TRUE ~ NA_character_
+    ),
+    marker = case_when(
+      format_type == "mfi" ~ str_extract(original, "___([^|]+)") %>% str_remove("___"),
+      format_type == "percent" ~ str_extract(original, "/([^|]+)") %>% str_remove("/"),
+      TRUE ~ NA_character_
+    ),
+    stat = str_extract(original, "[^|]+$")
+  ) %>%
+  mutate(
+    marker = marker %>%
+      str_replace_all("\\+", "") %>%
+      str_replace_all("-", "") %>%
+      str_to_upper()
+  )
+
+
+df_long <- df_mean %>%
+  pivot_longer(cols = everything(), names_to = "original", values_to = "value") %>%
+  left_join(col_info, by = "original") %>%
+  filter(!is.na(celltype), !is.na(marker), format_type %in% c("mfi", "percent")) %>%
+  select(celltype, marker, format_type, value)
+
+
+df_wide <- df_long %>%
+  pivot_wider(
+    names_from = format_type,
+    values_from = value
+  ) %>%
+  filter(!is.na(mfi) & !is.na(percent))
+
+df_wide <- df_wide %>%
+  group_by(marker) %>%
+  mutate(
+    mfi_zscore = (mfi - mean(mfi, na.rm = TRUE)) / sd(mfi, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+
+mat_z <- df_wide %>%
+  select(celltype, marker, mfi_zscore) %>%
+  pivot_wider(names_from = marker, values_from = mfi_zscore) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+clust_rows <- hclust(dist(mat_z))$order
+ordered_celltypes <- rownames(mat_z)[clust_rows]
+
+clust_cols <- hclust(dist(t(mat_z)))$order
+ordered_markers <- colnames(mat_z)[clust_cols]
+
+df_wide <- df_wide %>%
+  mutate(
+    celltype = factor(celltype, levels = ordered_celltypes),
+    marker = factor(marker, levels = ordered_markers)
+  )
+
+
+selected_markers <- c("FOXP3",  "CD25", "CD127", "CD44", "PD1","KI67", "CD62L")
+df_wide <- df_wide %>%
+  filter(marker %in% selected_markers)
+
+
+bubble_plot <-ggplot(df_wide, aes(x = marker, y = celltype, size = percent, fill = mfi_zscore)) +
+  geom_point(shape = 21, color = "black", stroke = 1.2, alpha = 0.8) +
+  scale_size_continuous(
+    limits = c(0, 100),
+    range = c(0, 14),
+    name = "Percentage of expressing cells"
+  ) +
+  scale_fill_gradientn(
+    colors = c("#46b9ab", "white", "#5f4a95"),
+    name = "MFI (z-score per marker)",
+    limits = c(min(df_wide$mfi_zscore, na.rm = TRUE),
+               max(df_wide$mfi_zscore, na.rm = TRUE))
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, face = "bold", size = 14, colour = "black"),
+    axis.text.y  = element_text(face = "bold", size = 14, colour = "black"),
+    axis.title   = element_text(face = "bold", size = 16, colour = "black"),
+    axis.ticks   = element_line(size = 1.2, colour = "black"),
+    legend.title = element_text(face = "bold", size = 14, colour = "black"),
+    legend.text  = element_text(size = 12, colour = "black"),
+    plot.title   = element_text(face = "bold", size = 18, hjust = 0.5, colour = "black")
+  ) +
+  labs(
+    title = "Tumor CD4 clusters identification",
+    x = "Marker",
+    y = "Tumor CD4 Cluster"
+  )
+
+
+ggsave("buble_ID_CD4_Tumor_TMP_infliximabs.svg", plot = bubble_plot, device = "svg", width = 13, height = 6, dpi = 300)
+
+
+bubble_plot
+
+
+```
+The bubble plot bellow is for CD4 TILs clusters (Extended data 7.b)
+```{r ID CLUSTER CD8 Tumor TMP infliximabs, fig.width=12, fig.height=5}
+
+df <- read_csv("C:/Users/benjamin.jung/Desktop/for_buble_plot/buble_ID_CD8_Tumor_TMP_infliximabs.csv")
+
+exclude_cols <- c("Tumor_evolution_fromJ7", "Tumor_volume_J17", "Tumor_weight_J17")
+
+
+df_numeric <- df %>%
+  select(where(is.numeric)) %>%
+  select(-any_of(exclude_cols))
+
+df_mean <- df_numeric %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+
+col_info <- tibble(original = colnames(df_mean)) %>%
+  mutate(
+    format_type = case_when(
+      str_detect(original, "___") ~ "mfi",
+      str_detect(original, "/") ~ "percent",
+      TRUE ~ "other"
+    ),
+    celltype = case_when(
+      format_type == "mfi" ~ str_extract(original, "^[^|]+"),
+      format_type == "percent" ~ str_extract(original, "^[^/]+"),
+      TRUE ~ NA_character_
+    ),
+    marker = case_when(
+      format_type == "mfi" ~ str_extract(original, "___([^|]+)") %>% str_remove("___"),
+      format_type == "percent" ~ str_extract(original, "/([^|]+)") %>% str_remove("/"),
+      TRUE ~ NA_character_
+    ),
+    stat = str_extract(original, "[^|]+$")
+  ) %>%
+  mutate(
+    marker = marker %>%
+      str_replace_all("\\+", "") %>%
+      str_replace_all("-", "") %>%
+      str_to_upper()
+  )
+
+
+df_long <- df_mean %>%
+  pivot_longer(cols = everything(), names_to = "original", values_to = "value") %>%
+  left_join(col_info, by = "original") %>%
+  filter(!is.na(celltype), !is.na(marker), format_type %in% c("mfi", "percent")) %>%
+  select(celltype, marker, format_type, value)
+
+df_wide <- df_long %>%
+  pivot_wider(
+    names_from = format_type,
+    values_from = value
+  ) %>%
+  filter(!is.na(mfi) & !is.na(percent))
+
+df_wide <- df_wide %>%
+  group_by(marker) %>%
+  mutate(
+    mfi_zscore = (mfi - mean(mfi, na.rm = TRUE)) / sd(mfi, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+mat_z <- df_wide %>%
+  select(celltype, marker, mfi_zscore) %>%
+  pivot_wider(names_from = marker, values_from = mfi_zscore) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+clust_rows <- hclust(dist(mat_z))$order
+ordered_celltypes <- rownames(mat_z)[clust_rows]
+
+clust_cols <- hclust(dist(t(mat_z)))$order
+ordered_markers <- colnames(mat_z)[clust_cols]
+
+df_wide <- df_wide %>%
+  mutate(
+    celltype = factor(celltype, levels = ordered_celltypes),
+    marker = factor(marker, levels = ordered_markers)
+  )
+
+
+selected_markers <- c("CD44", "CD62L", "PD1", "LAG3", "TIM3", "SLAMF6", "CD127", "CD39", "TBET", "KI67")
+df_wide <- df_wide %>%
+  filter(marker %in% selected_markers)
+
+
+bubble_plot <-ggplot(df_wide, aes(x = marker, y = celltype, size = percent, fill = mfi_zscore)) +
+  geom_point(shape = 21, color = "black", stroke = 1.2, alpha = 0.8) +
+  scale_size_continuous(
+    limits = c(0, 100),
+    range = c(0, 14),
+    name = "Percentage of expressing cells"
+  ) +
+  scale_fill_gradientn(
+    colors = c("#46b9ab", "white", "#5f4a95"),
+    name = "MFI (z-score per marker)",
+    limits = c(min(df_wide$mfi_zscore, na.rm = TRUE),
+               max(df_wide$mfi_zscore, na.rm = TRUE))
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, face = "bold", size = 14, colour = "black"),
+    axis.text.y  = element_text(face = "bold", size = 14, colour = "black"),
+    axis.title   = element_text(face = "bold", size = 16, colour = "black"),
+    axis.ticks   = element_line(size = 1.2, colour = "black"),
+    legend.title = element_text(face = "bold", size = 14, colour = "black"),
+    legend.text  = element_text(size = 12, colour = "black"),
+    plot.title   = element_text(face = "bold", size = 18, hjust = 0.5, colour = "black")
+  ) +
+  labs(
+    title = "Tumor CD8 clusters identification",
+    x = "Marker",
+    y = "Tumor CD8 Cluster"
+  )
+
+
+
+
+ggsave("buble_ID_CD8_Tumor_TMP_infliximabs.svg", plot = bubble_plot, device = "svg", width = 13, height = 6, dpi = 300)
+
+
+
+bubble_plot
+
+
+```
