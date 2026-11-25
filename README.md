@@ -1,7 +1,6 @@
 # TNF blockade with certolizumab improves the efficacy of anti-PD-1 and anti-CTLA-4 combination therapy for melanoma
 
-[![DOI](10.5281/zenodo.24542971)]
-
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24542971.svg)](https://doi.org/10.5281/zenodo.24542971)
 
 
 This repository contains the analysis code for the study:
