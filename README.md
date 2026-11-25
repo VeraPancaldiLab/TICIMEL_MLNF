@@ -19,7 +19,8 @@ This repository contains the code for the following analyses of the paper:
    - Trajectory analysis (slingshot via SCP)
    - Differential expression and over-representation analysis (Seurat, fgsea / MSigDB)
    - Transcription factor activity inference on pseudo-bulk profiles (decoupleR)
-2. **Bulk RNA-Seq of mouse B16-OVA tumors.** 
+2. **Bulk RNA-Seq of mouse B16-OVA tumors.**
+3. 
    - Differential expression (DESeq2)
    - GO Biological Process GSEA (clusterProfiler)
    - Enrichment network analysis (aPEAR) 
