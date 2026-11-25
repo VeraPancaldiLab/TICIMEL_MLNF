@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+type: software
+title: "TICIMEL_MLNF: Analysis code for the TICIMEL and MELANFα study"
+message: "If you use this code, please cite this software release."
+authors:
+  - given-names: "Benjamin"
+    family-names: "Jung"
+  - given-names: "Etienne"
+    family-names: "Leclercq"
+version: "1.0.0"
+license: Apache-2.0
+repository-code: "https://github.com/VeraPancaldiLab/TICIMEL_MLNF"
+abstract: >-
+  R Markdown scripts for CITE-seq, cytometry, and bulk RNA-seq analyses
+  accompanying the study "TNF blockade with certolizumab improves the efficacy
+  of anti-PD-1 and anti-CTLA-4 combination therapy for melanoma"
+  (medRxiv, doi:10.64898/2026.02.11.26346073).
